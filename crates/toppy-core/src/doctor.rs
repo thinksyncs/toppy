@@ -127,16 +127,6 @@ fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
         .with_no_client_auth();
     let crypto = QuicClientConfig::try_from(crypto)
         .map_err(|e| format!("quic client config failed: {}", e))?;
-    let mut client_config = ClientConfig::new(Arc::new(crypto));
-    client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
-
-    let bind_addr = "0.0.0.0:0"
-        .parse::<std::net::SocketAddr>()
-        .map_err(|e| e.to_string())?;
-    let mut endpoint =
-        Endpoint::client(bind_addr).map_err(|e| format!("quic client setup failed: {}", e))?;
-    endpoint.set_default_client_config(client_config);
-
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -146,6 +136,16 @@ fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
     let stream_timeout = Duration::from_millis(800);
 
     rt.block_on(async move {
+        let mut client_config = ClientConfig::new(Arc::new(crypto));
+        client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+
+        let bind_addr = "0.0.0.0:0"
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| e.to_string())?;
+        let mut endpoint =
+            Endpoint::client(bind_addr).map_err(|e| format!("quic client setup failed: {}", e))?;
+        endpoint.set_default_client_config(client_config);
+
         let connecting = endpoint
             .connect(addr, host)
             .map_err(|e| format!("quic connect setup failed: {}", e))?;

@@ -50,21 +50,4 @@ EOF
 output="$(TOPPY_CONFIG="$config_file" cargo run -p toppy-cli -- doctor --json)"
 rm -f "$config_file"
 
-printf '%s' "$output" | python - <<'PY'
-import json
-import sys
-
-data = json.load(sys.stdin)
-if data.get("overall") != "pass":
-    raise SystemExit(f"expected overall pass, got {data.get('overall')}")
-
-checks = {c["id"]: c for c in data.get("checks", [])}
-for required in ("cfg.load", "net.dns", "h3.connect"):
-    if required not in checks:
-        raise SystemExit(f"missing check: {required}")
-
-if checks["net.dns"]["status"] != "pass":
-    raise SystemExit(f"net.dns status: {checks['net.dns']['status']}")
-if checks["h3.connect"]["status"] != "pass":
-    raise SystemExit(f"h3.connect status: {checks['h3.connect']['status']}")
-PY
+printf '%s' "$output" | python -c $'import json,sys\n\ndata = json.load(sys.stdin)\noverall = data.get(\"overall\")\nif overall != \"pass\":\n    raise SystemExit(f\"expected overall pass, got {overall}\")\n\nchecks = {c[\"id\"]: c for c in data.get(\"checks\", [])}\nfor required in (\"cfg.load\", \"net.dns\", \"h3.connect\"):\n    if required not in checks:\n        raise SystemExit(f\"missing check: {required}\")\n\ndns_status = checks[\"net.dns\"][\"status\"]\nif dns_status != \"pass\":\n    raise SystemExit(f\"net.dns status: {dns_status}\")\nh3_status = checks[\"h3.connect\"][\"status\"]\nif h3_status != \"pass\":\n    raise SystemExit(f\"h3.connect status: {h3_status}\")\n'

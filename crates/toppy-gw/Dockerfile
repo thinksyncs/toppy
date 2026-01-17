@@ -15,7 +15,7 @@ COPY crates ./crates
 
 RUN cargo build -p toppy-gw --release
 
-FROM debian:bookworm-slim
+FROM rust:1.92-slim-bookworm
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*

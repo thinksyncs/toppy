@@ -9,5 +9,5 @@ toppy-core = { path = "../toppy-core" }
 tiny_http = "0.12"
 quinn = "0.11"
 rcgen = "0.13"
-rustls = "0.23"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util"] }
