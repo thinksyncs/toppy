@@ -45,7 +45,11 @@ fn doctor_passes_when_config_and_network_ok() {
     assert!(report
         .checks
         .iter()
-        .any(|c| c.id == "net.h3" && c.status == "pass"));
+        .any(|c| c.id == "net.dns" && c.status == "pass"));
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.id == "h3.connect" && c.status == "pass"));
 
     if let Some(value) = prev {
         env::set_var("TOPPY_CONFIG", value);
@@ -80,7 +84,11 @@ fn doctor_warns_when_config_missing() {
     assert!(report
         .checks
         .iter()
-        .any(|c| c.id == "net.h3" && c.status == "warn"));
+        .any(|c| c.id == "net.dns" && c.status == "warn"));
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.id == "h3.connect" && c.status == "warn"));
 
     if let Some(value) = prev {
         env::set_var("TOPPY_CONFIG", value);

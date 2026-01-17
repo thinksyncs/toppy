@@ -6,3 +6,4 @@ license = "MIT"
 
 [dependencies]
 toppy-core = { path = "../toppy-core" }
+tiny_http = "0.12"

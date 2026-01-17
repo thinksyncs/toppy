@@ -29,6 +29,13 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
    - `cargo run -p toppy-cli -- doctor --json`
    - Or `make doctor`
 
+## Gateway healthcheck (docker compose)
+
+- `make compose-up`
+- Wait until `docker compose ps` shows `healthy` for `toppy-gw`.
+- `curl -fsS http://localhost:8080/healthz`
+- `make compose-down`
+
 ## Threat model (summary)
 
 - Short-lived credentials and default-deny policies to limit blast radius.

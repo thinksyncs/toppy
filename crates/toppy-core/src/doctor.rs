@@ -8,7 +8,7 @@
 use crate::config;
 use serde::Serialize;
 use std::env;
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
@@ -56,6 +56,19 @@ fn tcp_connect_check(host: &str, port: u16) -> Result<(), String> {
     .map_err(|e| format!("connect to {} failed: {}", addr, e))
 }
 
+fn dns_check(host: &str, port: u16) -> Result<usize, String> {
+    let addr = format!("{}:{}", host, port);
+    let addrs: Vec<_> = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("dns resolution failed for {}: {}", addr, e))?
+        .collect();
+    if addrs.is_empty() {
+        Err(format!("dns resolution returned no addresses for {}", addr))
+    } else {
+        Ok(addrs.len())
+    }
+}
+
 /// Runs a set of diagnostics and returns a report.
 ///
 /// Dynamic implementation:
@@ -88,24 +101,51 @@ pub fn doctor_check() -> DoctorReport {
         Ok((cfg, _path)) => {
             let host = cfg.gateway.unwrap_or_else(|| "127.0.0.1".to_string());
             let port = cfg.port.unwrap_or(4433);
+            let dns_ok = match dns_check(&host, port) {
+                Ok(count) => {
+                    checks.push(mk(
+                        "net.dns",
+                        "pass",
+                        format!("resolved {}:{} to {} addr(s)", host, port, count),
+                    ));
+                    true
+                }
+                Err(e) => {
+                    checks.push(mk("net.dns", "fail", e));
+                    false
+                }
+            };
+
             match env::var("TOPPY_DOCTOR_NET").as_deref() {
-                Ok("pass") => checks.push(mk("net.h3", "pass", "forced pass via TOPPY_DOCTOR_NET")),
-                Ok("fail") => checks.push(mk("net.h3", "fail", "forced fail via TOPPY_DOCTOR_NET")),
-                Ok("skip") => checks.push(mk("net.h3", "warn", "skipped via TOPPY_DOCTOR_NET")),
+                Ok("pass") => {
+                    checks.push(mk("h3.connect", "pass", "forced pass via TOPPY_DOCTOR_NET"))
+                }
+                Ok("fail") => {
+                    checks.push(mk("h3.connect", "fail", "forced fail via TOPPY_DOCTOR_NET"))
+                }
+                Ok("skip") => checks.push(mk("h3.connect", "warn", "skipped via TOPPY_DOCTOR_NET")),
+                _ if !dns_ok => {
+                    checks.push(mk("h3.connect", "warn", "skipped because net.dns failed"))
+                }
                 _ => match tcp_connect_check(&host, port) {
                     Ok(()) => checks.push(mk(
-                        "net.h3",
+                        "h3.connect",
                         "pass",
-                        format!("reachable (tcp) {}:{}", host, port),
+                        format!("reachable (tcp preflight) {}:{}", host, port),
                     )),
-                    Err(e) => checks.push(mk("net.h3", "fail", e)),
+                    Err(e) => checks.push(mk("h3.connect", "fail", e)),
                 },
             }
         }
         Err(_) => {
             // config が無いならネットチェックは “warn (skip)” にする
             checks.push(mk(
-                "net.h3",
+                "net.dns",
+                "warn",
+                "skipped because config load failed (set TOPPY_CONFIG or create ~/.config/toppy/config.toml)",
+            ));
+            checks.push(mk(
+                "h3.connect",
                 "warn",
                 "skipped because config load failed (set TOPPY_CONFIG or create ~/.config/toppy/config.toml)",
             ));

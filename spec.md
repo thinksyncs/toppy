@@ -46,13 +46,13 @@ S2 – ゲートウェイヘルスチェック + Compose（Gate L2：結合�
 2.1 進捗チェック（S0 -> S2）
 	S0: 1-4は完了。
 	S1: 1-3は完了。
-	S2: 未着手。
+	S2: 1-2は完了。3は一部完了（チェック追加、Integrationテスト/CIは未着手）。
 
 2.2 詳細TODO（粒度上げ）
 S0 – リポジトリ骨格
 	- [x] Workspace構成を確定（`crates/toppy-cli`, `crates/toppy-gw`, `crates/toppy-core`, `crates/toppy-proto`）
 	- [x] Makefile/justfile を追加し、`fmt/clippy/test/dev/compose-up/compose-down/doctor` のエントリを定義
-	- [ ] `docker compose` 用のベースファイルを追加
+	- [x] `docker compose` 用のベースファイルを追加
 	- [x] GitHub Actions を追加（`cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny check`）
 	- [x] `cargo deny` の設定ファイルを追加
 	- [x] README にクイックスタート（5分以内）を追記
@@ -69,12 +69,12 @@ S1 – doctor コマンド v0
 	- [x] `cargo test` をCIで実行（L1ゲート）
 
 S2 – ゲートウェイヘルスチェック + Compose
-	- [ ] `toppy-gw` に `/healthz` を追加（HTTP 200/JSON）
-	- [ ] `Dockerfile` と `HEALTHCHECK` を追加
-	- [ ] `docker compose` で `toppy-gw` を起動
-	- [ ] Healthcheckの待ち合わせ手順を README に追加
-	- [ ] `doctor` に `net.dns` チェックを追加
-	- [ ] `doctor` に `h3.connect` チェックを追加（暫定OK判定も可）
+	- [x] `toppy-gw` に `/healthz` を追加（HTTP 200/JSON）
+	- [x] `Dockerfile` と `HEALTHCHECK` を追加
+	- [x] `docker compose` で `toppy-gw` を起動
+	- [x] Healthcheckの待ち合わせ手順を README に追加
+	- [x] `doctor` に `net.dns` チェックを追加
+	- [x] `doctor` に `h3.connect` チェックを追加（暫定OK判定も可）
 	- [ ] Integration テストを追加（compose起動 + doctor）
 	- [ ] CI で Integration テストを実行（L2ゲート）
 

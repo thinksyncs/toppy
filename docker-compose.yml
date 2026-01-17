@@ -1,0 +1,14 @@
+services:
+  toppy-gw:
+    build:
+      context: .
+      dockerfile: crates/toppy-gw/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      TOPPY_GW_LISTEN: 0.0.0.0:8080
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
