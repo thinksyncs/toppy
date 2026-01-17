@@ -90,19 +90,19 @@ Phase 3 以降のタスク（参考）
 各タスクには段階的なゲートを設定し、合格条件を CI やレビューで自動確認します。
 
 Gate L0 - Repo hygiene
-	- [ ] Criteria: workspace builds, lint/format policy enforced, license/threat model documented.
-	- [ ] Tests: cargo fmt --check, cargo clippy -D warnings, cargo deny check.
-	- [ ] Evidence: CI green + README sections present.
+	- [x] Criteria: workspace builds, lint/format policy enforced, license/threat model documented.
+	- [x] Tests: cargo fmt --check, cargo clippy -D warnings, cargo deny check.
+	- [x] Evidence: CI green + README sections present.
 
 Gate L1 - Unit tests
-	- [ ] Criteria: doctor JSON schema stable; core pure logic covered by unit tests.
-	- [ ] Tests: cargo test (unit).
-	- [ ] Evidence: CI green + unit test coverage for config/policy/messages.
+	- [x] Criteria: doctor JSON schema stable; core pure logic covered by unit tests.
+	- [x] Tests: cargo test (unit).
+	- [x] Evidence: CI green + unit test coverage for config/policy/messages.
 
 Gate L2 - Integration
-	- [ ] Criteria: gateway healthcheck OK; doctor net.dns + h3.connect + tun.perm + mtu.sanity checks pass.
-	- [ ] Tests: docker compose up + healthcheck wait + doctor integration tests.
-	- [ ] Evidence: CI green with integration job.
+	- [x] Criteria: gateway healthcheck OK; doctor net.dns + h3.connect + tun.perm + mtu.sanity checks pass.
+	- [x] Tests: docker compose up + healthcheck wait + doctor integration tests.
+	- [x] Evidence: CI green with integration job.
 
 Gate L3 - End-to-End
 	- [ ] Criteria: toppy up connects to allowed targets; disallowed targets are denied with reason.
