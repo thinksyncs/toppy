@@ -59,8 +59,7 @@ fn load_config() -> Result<(Config, PathBuf), String> {
 
     let data = fs::read_to_string(&path)
         .map_err(|e| format!("failed to read config {}: {}", path.display(), e))?;
-    let cfg: Config =
-        toml::from_str(&data).map_err(|e| format!("failed to parse TOML: {}", e))?;
+    let cfg: Config = toml::from_str(&data).map_err(|e| format!("failed to parse TOML: {}", e))?;
     Ok((cfg, path))
 }
 
@@ -124,21 +123,9 @@ pub fn doctor_check() -> DoctorReport {
             let host = cfg.gateway.unwrap_or_else(|| "127.0.0.1".to_string());
             let port = cfg.port.unwrap_or(4433);
             match env::var("TOPPY_DOCTOR_NET").as_deref() {
-                Ok("pass") => checks.push(mk(
-                    "net.h3",
-                    "pass",
-                    "forced pass via TOPPY_DOCTOR_NET",
-                )),
-                Ok("fail") => checks.push(mk(
-                    "net.h3",
-                    "fail",
-                    "forced fail via TOPPY_DOCTOR_NET",
-                )),
-                Ok("skip") => checks.push(mk(
-                    "net.h3",
-                    "warn",
-                    "skipped via TOPPY_DOCTOR_NET",
-                )),
+                Ok("pass") => checks.push(mk("net.h3", "pass", "forced pass via TOPPY_DOCTOR_NET")),
+                Ok("fail") => checks.push(mk("net.h3", "fail", "forced fail via TOPPY_DOCTOR_NET")),
+                Ok("skip") => checks.push(mk("net.h3", "warn", "skipped via TOPPY_DOCTOR_NET")),
                 _ => match tcp_connect_check(&host, port) {
                     Ok(()) => checks.push(mk(
                         "net.h3",

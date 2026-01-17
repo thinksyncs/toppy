@@ -44,20 +44,20 @@ S2 – ゲートウェイヘルスチェック + Compose（Gate L2：結合�
 	3.	toppy doctor --json に net.dns（ゲートウェイの名前解決）および h3.connect（HTTP/3 ハンドシェイク）のチェックを実装し、CI で Integration テストを実行する。
 
 2.1 進捗チェック（S0 -> S2）
-	S0: 1は完了。2-4は未着手。
+	S0: 1-4は完了。
 	S1: 1は完了。2-3は未着手（純粋ロジックとCIが必要）。
 	S2: 未着手。
 
 2.2 詳細TODO（粒度上げ）
 S0 – リポジトリ骨格
 	- [x] Workspace構成を確定（`crates/toppy-cli`, `crates/toppy-gw`, `crates/toppy-core`, `crates/toppy-proto`）
-	- [ ] Makefile/justfile を追加し、`fmt/clippy/test/dev/compose-up/compose-down/doctor` のエントリを定義
+	- [x] Makefile/justfile を追加し、`fmt/clippy/test/dev/compose-up/compose-down/doctor` のエントリを定義
 	- [ ] `docker compose` 用のベースファイルを追加
-	- [ ] GitHub Actions を追加（`cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny check`）
-	- [ ] `cargo deny` の設定ファイルを追加
-	- [ ] README にクイックスタート（5分以内）を追記
-	- [ ] README にライセンス表記（Apache-2.0 または MIT）を追記
-	- [ ] README に脅威モデル概要を追記
+	- [x] GitHub Actions を追加（`cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny check`）
+	- [x] `cargo deny` の設定ファイルを追加
+	- [x] README にクイックスタート（5分以内）を追記
+	- [x] README にライセンス表記（Apache-2.0 または MIT）を追記
+	- [x] README に脅威モデル概要を追記
 
 S1 – doctor コマンド v0
 	- [x] `doctor` の JSON 形式に `version/overall/checks` を固定

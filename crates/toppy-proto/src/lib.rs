@@ -13,3 +13,9 @@ impl PlaceholderMessage {
         Self
     }
 }
+
+impl Default for PlaceholderMessage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
