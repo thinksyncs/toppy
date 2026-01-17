@@ -69,7 +69,7 @@ S3 - HTTP/3 接続検証（Gate L2）
 
 S4 - TUN 権限検出 + MTU サニティチェック（Gate L2）
 	- [x] Linux: /dev/net/tun の存在確認と open 可否を検出（permission denied は fail）。
-	- [ ] macOS: utun 作成可否のチェック（未実装、warn）。
+	- [x] macOS: utun 作成可否のチェック（AF_SYSTEM + SYSPROTO_CONTROL）。
 	- [x] 推奨 MTU を 1350 として sanity チェック（<1200 / >9000 は warn）。
 	- [x] doctor の JSON 出力に tun.perm と mtu.sanity を追加し、Integration テストを更新する。
 
@@ -122,7 +122,7 @@ S3 - 証明書検証とトークン検証
 
 S4 - TUN 権限検出 + MTU サニティチェック
 	- [x] Linux: /dev/net/tun の存在確認と open の可否を判定
-	- [ ] macOS: utun 作成の可否チェック（未実装）
+	- [x] macOS: utun 作成の可否チェック（AF_SYSTEM + SYSPROTO_CONTROL）
 	- [x] MTU 推奨値を 1350 に設定（<1200 / >9000 は warn）
 	- [x] 異常値のしきい値に応じた warn を実装
 	- [x] doctor の JSON 出力に tun.perm / mtu.sanity を追加

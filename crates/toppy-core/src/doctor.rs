@@ -77,7 +77,10 @@ fn tun_perm_check() -> DoctorCheck {
     }
     #[cfg(target_os = "macos")]
     {
-        mk("tun.perm", "warn", "utun permission check not implemented")
+        match macos_utun_check() {
+            Ok(()) => mk("tun.perm", "pass", "utun device opened"),
+            Err(e) => mk("tun.perm", "fail", e),
+        }
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -86,6 +89,54 @@ fn tun_perm_check() -> DoctorCheck {
             "warn",
             "tun permission check not supported on this OS",
         )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_utun_check() -> Result<(), String> {
+    use std::io;
+    use std::mem;
+
+    unsafe {
+        let fd = libc::socket(libc::AF_SYSTEM, libc::SOCK_DGRAM, libc::SYSPROTO_CONTROL);
+        if fd < 0 {
+            return Err(format!(
+                "utun socket failed: {}",
+                io::Error::last_os_error()
+            ));
+        }
+
+        let mut info: libc::ctl_info = mem::zeroed();
+        let name = b"com.apple.net.utun_control\0";
+        for (dst, src) in info.ctl_name.iter_mut().zip(name.iter()) {
+            *dst = *src as libc::c_char;
+        }
+        if libc::ioctl(fd, libc::CTLIOCGINFO, &mut info) < 0 {
+            let err = io::Error::last_os_error();
+            libc::close(fd);
+            return Err(format!("utun ioctl CTLIOCGINFO failed: {}", err));
+        }
+
+        let mut addr: libc::sockaddr_ctl = mem::zeroed();
+        addr.sc_len = mem::size_of::<libc::sockaddr_ctl>() as u8;
+        addr.sc_family = libc::AF_SYSTEM as u8;
+        addr.ss_sysaddr = libc::AF_SYS_CONTROL as u16;
+        addr.sc_id = info.ctl_id;
+        addr.sc_unit = 0;
+
+        if libc::connect(
+            fd,
+            &addr as *const libc::sockaddr_ctl as *const libc::sockaddr,
+            mem::size_of::<libc::sockaddr_ctl>() as u32,
+        ) < 0
+        {
+            let err = io::Error::last_os_error();
+            libc::close(fd);
+            return Err(format!("utun connect failed: {}", err));
+        }
+
+        libc::close(fd);
+        Ok(())
     }
 }
 
