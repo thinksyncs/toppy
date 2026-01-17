@@ -27,7 +27,7 @@ fi
 config_file="$(mktemp)"
 cat >"$config_file" <<EOF
 gateway = "127.0.0.1"
-port = 8080
+port = 4433
 EOF
 
 output="$(TOPPY_CONFIG="$config_file" cargo run -p toppy-cli -- doctor --json)"

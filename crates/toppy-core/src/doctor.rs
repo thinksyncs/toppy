@@ -6,9 +6,15 @@
 //! the result. The overall status is aggregated across all checks.
 
 use crate::config;
+use quinn::crypto::rustls::QuicClientConfig;
+use quinn::{ClientConfig, Endpoint};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, SignatureScheme};
 use serde::Serialize;
 use std::env;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::ToSocketAddrs;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
@@ -44,18 +50,6 @@ fn aggregate_overall(checks: &[DoctorCheck]) -> String {
     }
 }
 
-fn tcp_connect_check(host: &str, port: u16) -> Result<(), String> {
-    let addr = format!("{}:{}", host, port);
-    TcpStream::connect_timeout(
-        &addr
-            .parse()
-            .map_err(|e| format!("invalid address {}: {}", addr, e))?,
-        Duration::from_millis(800),
-    )
-    .map(|_| ())
-    .map_err(|e| format!("connect to {} failed: {}", addr, e))
-}
-
 fn dns_check(host: &str, port: u16) -> Result<usize, String> {
     let addr = format!("{}:{}", host, port);
     let addrs: Vec<_> = addr
@@ -69,11 +63,129 @@ fn dns_check(host: &str, port: u16) -> Result<usize, String> {
     }
 }
 
+#[derive(Debug)]
+struct NoVerifier;
+
+impl ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::ECDSA_NISTP521_SHA512,
+            SignatureScheme::RSA_PSS_SHA256,
+            SignatureScheme::RSA_PSS_SHA384,
+            SignatureScheme::RSA_PSS_SHA512,
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+            SignatureScheme::ED25519,
+            SignatureScheme::ED448,
+        ]
+    }
+}
+
+fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
+    let addr = format!("{}:{}", host, port);
+    let addr = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve {} failed: {}", addr, e))?
+        .next()
+        .ok_or_else(|| format!("resolve {} returned no addresses", addr))?;
+
+    let crypto = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerifier))
+        .with_no_client_auth();
+    let crypto = QuicClientConfig::try_from(crypto)
+        .map_err(|e| format!("quic client config failed: {}", e))?;
+    let mut client_config = ClientConfig::new(Arc::new(crypto));
+    client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+
+    let bind_addr = "0.0.0.0:0"
+        .parse::<std::net::SocketAddr>()
+        .map_err(|e| e.to_string())?;
+    let mut endpoint =
+        Endpoint::client(bind_addr).map_err(|e| format!("quic client setup failed: {}", e))?;
+    endpoint.set_default_client_config(client_config);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("tokio init failed: {}", e))?;
+
+    let connect_timeout = Duration::from_millis(800);
+    let stream_timeout = Duration::from_millis(800);
+
+    rt.block_on(async move {
+        let connecting = endpoint
+            .connect(addr, host)
+            .map_err(|e| format!("quic connect setup failed: {}", e))?;
+        let connection = tokio::time::timeout(connect_timeout, connecting)
+            .await
+            .map_err(|_| "quic connect timed out".to_string())?
+            .map_err(|e| format!("quic connect failed: {}", e))?;
+
+        let (mut send, mut recv) = tokio::time::timeout(stream_timeout, connection.open_bi())
+            .await
+            .map_err(|_| "quic open stream timed out".to_string())?
+            .map_err(|e| format!("quic open stream failed: {}", e))?;
+
+        send.write_all(b"ping")
+            .await
+            .map_err(|e| format!("quic send failed: {}", e))?;
+        send.finish()
+            .map_err(|e| format!("quic finish failed: {}", e))?;
+
+        let data = tokio::time::timeout(stream_timeout, recv.read_to_end(16))
+            .await
+            .map_err(|_| "quic read timed out".to_string())?
+            .map_err(|e| format!("quic read failed: {}", e))?;
+
+        connection.close(0u32.into(), b"done");
+        endpoint.wait_idle().await;
+
+        if data == b"pong" {
+            Ok(())
+        } else {
+            Err(format!("unexpected response: {:?}", data))
+        }
+    })
+}
+
 /// Runs a set of diagnostics and returns a report.
 ///
 /// Dynamic implementation:
 /// - Loads config from `TOPPY_CONFIG` or `~/.config/toppy/config.toml`
-/// - Checks basic reachability to configured `gateway:port` by TCP connect
+/// - Checks DNS resolution and minimal QUIC ping for `gateway:port`
 pub fn doctor_check() -> DoctorReport {
     let mut checks: Vec<DoctorCheck> = Vec::new();
 
@@ -127,11 +239,11 @@ pub fn doctor_check() -> DoctorReport {
                 _ if !dns_ok => {
                     checks.push(mk("h3.connect", "warn", "skipped because net.dns failed"))
                 }
-                _ => match tcp_connect_check(&host, port) {
+                _ => match quic_ping_check(&host, port) {
                     Ok(()) => checks.push(mk(
                         "h3.connect",
                         "pass",
-                        format!("reachable (tcp preflight) {}:{}", host, port),
+                        format!("quic ping ok {}:{}", host, port),
                     )),
                     Err(e) => checks.push(mk("h3.connect", "fail", e)),
                 },

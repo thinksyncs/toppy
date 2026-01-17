@@ -5,8 +5,10 @@ services:
       dockerfile: crates/toppy-gw/Dockerfile
     ports:
       - "8080:8080"
+      - "4433:4433/udp"
     environment:
       TOPPY_GW_LISTEN: 0.0.0.0:8080
+      TOPPY_GW_QUIC_LISTEN: 0.0.0.0:4433
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
       interval: 5s

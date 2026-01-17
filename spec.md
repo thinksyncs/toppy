@@ -47,6 +47,7 @@ S2 – ゲートウェイヘルスチェック + Compose（Gate L2：結合�
 	S0: 1-4は完了。
 	S1: 1-3は完了。
 	S2: 1-3は完了。
+	S3: 1-2は完了（証明書検証は暫定スキップ）。
 
 2.2 詳細TODO（粒度上げ）
 S0 – リポジトリ骨格
@@ -77,6 +78,11 @@ S2 – ゲートウェイヘルスチェック + Compose
 	- [x] `doctor` に `h3.connect` チェックを追加（暫定OK判定も可）
 	- [x] Integration テストを追加（compose起動 + doctor）
 	- [x] CI で Integration テストを実行（L2ゲート）
+
+S3 – HTTP/3 接続検証
+	- [x] QUIC ping RPC を実装（gateway/doctor）
+	- [x] 認証はダミー（現状スキップ）
+	- [ ] 証明書検証とトークン検証を追加
 
 S3 – HTTP/3 接続検証（Gate L2）
 	1.	CLI からゲートウェイへの最小 RPC を実装し、HTTP/3（QUIC）接続が成立するかどうかを doctor で確認できるようにする。
