@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "crates/toppy-cli",
+    "crates/toppy-gw",
+    "crates/toppy-core",
+    "crates/toppy-proto",
+]
+
+[package]
+name = "toppy"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
