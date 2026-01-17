@@ -17,7 +17,7 @@ fn unique_temp_path(prefix: &str) -> PathBuf {
 
 fn write_config(path: &PathBuf, host: &str, port: u16) {
     let data = format!(
-        "gateway = \"{}\"\nport = {}\n",
+        "gateway = \"{}\"\nport = {}\nmtu = 1350\n",
         host.replace('"', "\\\""),
         port
     );
@@ -33,8 +33,10 @@ fn doctor_passes_when_config_and_network_ok() {
     write_config(&path, "127.0.0.1", 4433);
     let prev = env::var("TOPPY_CONFIG").ok();
     let prev_net = env::var("TOPPY_DOCTOR_NET").ok();
+    let prev_tun = env::var("TOPPY_DOCTOR_TUN").ok();
     env::set_var("TOPPY_CONFIG", &path);
     env::set_var("TOPPY_DOCTOR_NET", "pass");
+    env::set_var("TOPPY_DOCTOR_TUN", "pass");
 
     let report = doctor_check();
     assert_eq!(report.overall, "pass");
@@ -61,6 +63,11 @@ fn doctor_passes_when_config_and_network_ok() {
     } else {
         env::remove_var("TOPPY_DOCTOR_NET");
     }
+    if let Some(value) = prev_tun {
+        env::set_var("TOPPY_DOCTOR_TUN", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_TUN");
+    }
     let _ = fs::remove_file(&path);
 }
 
@@ -72,8 +79,10 @@ fn doctor_warns_when_config_missing() {
     let path = unique_temp_path("doctor-missing");
     let prev = env::var("TOPPY_CONFIG").ok();
     let prev_net = env::var("TOPPY_DOCTOR_NET").ok();
+    let prev_tun = env::var("TOPPY_DOCTOR_TUN").ok();
     env::set_var("TOPPY_CONFIG", &path);
     env::set_var("TOPPY_DOCTOR_NET", "pass");
+    env::set_var("TOPPY_DOCTOR_TUN", "pass");
 
     let report = doctor_check();
     assert_eq!(report.overall, "fail");
@@ -100,6 +109,11 @@ fn doctor_warns_when_config_missing() {
     } else {
         env::remove_var("TOPPY_DOCTOR_NET");
     }
+    if let Some(value) = prev_tun {
+        env::set_var("TOPPY_DOCTOR_TUN", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_TUN");
+    }
 }
 
 #[test]
@@ -110,8 +124,10 @@ fn doctor_report_includes_version() {
     let path = unique_temp_path("doctor-version");
     let prev = env::var("TOPPY_CONFIG").ok();
     let prev_net = env::var("TOPPY_DOCTOR_NET").ok();
+    let prev_tun = env::var("TOPPY_DOCTOR_TUN").ok();
     env::set_var("TOPPY_CONFIG", &path);
     env::set_var("TOPPY_DOCTOR_NET", "pass");
+    env::set_var("TOPPY_DOCTOR_TUN", "pass");
 
     let report = doctor_check();
     assert_eq!(report.version, env!("CARGO_PKG_VERSION"));
@@ -125,5 +141,10 @@ fn doctor_report_includes_version() {
         env::set_var("TOPPY_DOCTOR_NET", value);
     } else {
         env::remove_var("TOPPY_DOCTOR_NET");
+    }
+    if let Some(value) = prev_tun {
+        env::set_var("TOPPY_DOCTOR_TUN", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_TUN");
     }
 }

@@ -1,6 +1,8 @@
 use quinn::ServerConfig;
-use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::env;
+use std::fs;
+use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread;
@@ -58,17 +60,21 @@ async fn run_quic(listen: &str) -> Result<(), String> {
     let addr: SocketAddr = listen
         .parse()
         .map_err(|e| format!("invalid quic listen {}: {}", listen, e))?;
-    let server_config = build_quic_config()?;
+    let cert_path = env::var("TOPPY_GW_CERT").ok();
+    let key_path = env::var("TOPPY_GW_KEY").ok();
+    let expected_token = env::var("TOPPY_GW_TOKEN").ok();
+    let server_config = build_quic_config(cert_path.as_deref(), key_path.as_deref())?;
     let endpoint = quinn::Endpoint::server(server_config, addr)
         .map_err(|e| format!("quic bind failed: {}", e))?;
 
     println!("toppy-gw quic listening on {}", listen);
 
     while let Some(incoming) = endpoint.accept().await {
+        let expected_token = expected_token.clone();
         tokio::spawn(async move {
             match incoming.await {
                 Ok(connection) => {
-                    if let Err(e) = handle_connection(connection).await {
+                    if let Err(e) = handle_connection(connection, expected_token.as_deref()).await {
                         eprintln!("quic connection error: {}", e);
                     }
                 }
@@ -82,7 +88,10 @@ async fn run_quic(listen: &str) -> Result<(), String> {
     Ok(())
 }
 
-async fn handle_connection(connection: quinn::Connection) -> Result<(), String> {
+async fn handle_connection(
+    connection: quinn::Connection,
+    expected_token: Option<&str>,
+) -> Result<(), String> {
     loop {
         let (mut send, mut recv) = connection
             .accept_bi()
@@ -90,10 +99,33 @@ async fn handle_connection(connection: quinn::Connection) -> Result<(), String> 
             .map_err(|e| format!("quic stream accept failed: {}", e))?;
 
         let data = recv
-            .read_to_end(16)
+            .read_to_end(256)
             .await
             .map_err(|e| format!("quic read failed: {}", e))?;
-        if data == b"ping" {
+        if !data.starts_with(b"ping") {
+            let _ = send.finish();
+            continue;
+        }
+        let token = if data == b"ping" {
+            None
+        } else if let Some(rest) = data.strip_prefix(b"ping ") {
+            Some(rest)
+        } else {
+            None
+        };
+        if let Some(expected) = expected_token {
+            let provided = token
+                .and_then(|value| std::str::from_utf8(value).ok())
+                .map(|value| value.trim());
+            if provided != Some(expected) {
+                send.write_all(b"unauthorized")
+                    .await
+                    .map_err(|e| format!("quic write failed: {}", e))?;
+                let _ = send.finish();
+                continue;
+            }
+        }
+        if data.starts_with(b"ping") {
             send.write_all(b"pong")
                 .await
                 .map_err(|e| format!("quic write failed: {}", e))?;
@@ -102,15 +134,50 @@ async fn handle_connection(connection: quinn::Connection) -> Result<(), String> 
     }
 }
 
-fn build_quic_config() -> Result<ServerConfig, String> {
-    let rcgen::CertifiedKey { cert, key_pair } =
-        rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
-            .map_err(|e| format!("cert generation failed: {}", e))?;
-    let cert_der = cert.der().clone();
-    let key_der = key_pair.serialize_der();
+fn load_cert_chain(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
+    let data =
+        fs::read(path).map_err(|e| format!("failed to read cert {}: {}", path, e))?;
+    let mut reader = BufReader::new(&data[..]);
+    let certs = rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to parse certs {}: {}", path, e))?;
+    if certs.is_empty() {
+        return Err(format!("no certs found in {}", path));
+    }
+    Ok(certs)
+}
 
-    let cert_chain = vec![cert_der];
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der));
+fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
+    let data = fs::read(path).map_err(|e| format!("failed to read key {}: {}", path, e))?;
+    let mut reader = BufReader::new(&data[..]);
+    rustls_pemfile::private_key(&mut reader)
+        .map_err(|e| format!("failed to parse key {}: {}", path, e))?
+        .ok_or_else(|| format!("no private key found in {}", path))
+}
+
+fn build_quic_config(cert_path: Option<&str>, key_path: Option<&str>) -> Result<ServerConfig, String> {
+    let (cert_chain, key) = match (cert_path, key_path) {
+        (Some(cert_path), Some(key_path)) => {
+            (load_cert_chain(cert_path)?, load_private_key(key_path)?)
+        }
+        (None, None) => {
+            let rcgen::CertifiedKey { cert, key_pair } =
+                rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+                    .map_err(|e| format!("cert generation failed: {}", e))?;
+            let cert_der = cert.der().clone();
+            let key_der = key_pair.serialize_der();
+            (
+                vec![cert_der],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+            )
+        }
+        _ => {
+            return Err(
+                "both TOPPY_GW_CERT and TOPPY_GW_KEY must be set to load external certs"
+                    .to_string(),
+            )
+        }
+    };
 
     let mut server_config =
         quinn::ServerConfig::with_single_cert(cert_chain, key).map_err(|e| e.to_string())?;

@@ -21,6 +21,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/toppy-gw /usr/local/bin/toppy-gw
+COPY crates/toppy-gw/testdata/localhost-cert.pem /etc/toppy/localhost-cert.pem
+COPY crates/toppy-gw/testdata/localhost-key.pem /etc/toppy/localhost-key.pem
 
 EXPOSE 8080
 HEALTHCHECK --interval=5s --timeout=2s --retries=5 CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1

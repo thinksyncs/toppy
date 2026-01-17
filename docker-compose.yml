@@ -9,6 +9,9 @@ services:
     environment:
       TOPPY_GW_LISTEN: 0.0.0.0:8080
       TOPPY_GW_QUIC_LISTEN: 0.0.0.0:4433
+      TOPPY_GW_CERT: /etc/toppy/localhost-cert.pem
+      TOPPY_GW_KEY: /etc/toppy/localhost-key.pem
+      TOPPY_GW_TOKEN: dev-token
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
       interval: 5s

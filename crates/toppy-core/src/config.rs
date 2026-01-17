@@ -7,6 +7,10 @@ use std::path::PathBuf;
 pub struct Config {
     pub gateway: Option<String>,
     pub port: Option<u16>,
+    pub ca_cert_path: Option<String>,
+    pub server_name: Option<String>,
+    pub auth_token: Option<String>,
+    pub mtu: Option<u16>,
 }
 
 impl Config {
@@ -19,6 +23,26 @@ impl Config {
         if let Some(port) = self.port {
             if port == 0 {
                 return Err("port must be non-zero".to_string());
+            }
+        }
+        if let Some(ca_cert_path) = &self.ca_cert_path {
+            if ca_cert_path.trim().is_empty() {
+                return Err("ca_cert_path must not be empty".to_string());
+            }
+        }
+        if let Some(server_name) = &self.server_name {
+            if server_name.trim().is_empty() {
+                return Err("server_name must not be empty".to_string());
+            }
+        }
+        if let Some(auth_token) = &self.auth_token {
+            if auth_token.trim().is_empty() {
+                return Err("auth_token must not be empty".to_string());
+            }
+        }
+        if let Some(mtu) = self.mtu {
+            if mtu == 0 {
+                return Err("mtu must be non-zero".to_string());
             }
         }
         Ok(())
@@ -67,6 +91,10 @@ mod tests {
         let cfg = Config {
             gateway: Some("".to_string()),
             port: Some(4433),
+            ca_cert_path: None,
+            server_name: None,
+            auth_token: None,
+            mtu: None,
         };
         assert!(cfg.validate().is_err());
     }
@@ -76,6 +104,10 @@ mod tests {
         let cfg = Config {
             gateway: Some("127.0.0.1".to_string()),
             port: Some(0),
+            ca_cert_path: None,
+            server_name: None,
+            auth_token: None,
+            mtu: None,
         };
         assert!(cfg.validate().is_err());
     }

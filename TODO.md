@@ -26,7 +26,7 @@ S2 - Gateway Healthcheck + Compose (Gate L2: integration)
 	- [x] S0: items 1-4 complete.
 	- [x] S1: items 1-3 complete.
 	- [x] S2: items 1-3 complete.
-	- [ ] S3: 証明書検証/トークン検証が未完了。
+	- [x] S3: 証明書検証/トークン検証を実装済み。
 
 1.2 詳細TODO（粒度上げ）
 S0 - Repo Skeleton
@@ -61,16 +61,17 @@ S2 - Gateway Healthcheck + Compose
 S3 - HTTP/3 接続検証
 	- [x] QUIC ping RPC を実装（gateway/doctor）
 	- [x] 認証はダミー（現状スキップ）
-	- [ ] 証明書検証とトークン検証を追加（TLS 検証とトークン検証の双方を必須化）
+	- [x] 証明書検証とトークン検証を追加（CA PEM + 共有トークン）
 
 S3 - HTTP/3 接続検証（Gate L2）
 	- [x] CLI からゲートウェイへの最小 RPC を実装し、HTTP/3（QUIC）接続が成立するかどうかを doctor で確認できるようにする。
 	- [x] 認証はこの段階ではダミートークン等で代用し、接続の成否と証明書検証に集中する。
 
 S4 - TUN 権限検出 + MTU サニティチェック（Gate L2）
-	- [ ] Linux で TUN デバイスが作成可能かを検出する (/dev/net/tun の存在や CAP_NET_ADMIN 有無)。macOS の utun への対応も検討する。
-	- [ ] 推奨 MTU を計算し、接続対象の MTU が極端に小さい・大きい場合に警告を出す。
-	- [ ] doctor の JSON 出力に tun.perm と mtu.sanity を追加し、Integration テストを更新する。
+	- [x] Linux: /dev/net/tun の存在確認と open 可否を検出（permission denied は fail）。
+	- [ ] macOS: utun 作成可否のチェック（未実装、warn）。
+	- [x] 推奨 MTU を 1350 として sanity チェック（<1200 / >9000 は warn）。
+	- [x] doctor の JSON 出力に tun.perm と mtu.sanity を追加し、Integration テストを更新する。
 
 S5 - E2E TCP到達性（Gate L3：End-to-End）
 	- [ ] Linux ランナー上で toppy up を実行し、許可されたターゲットへの TCP (例：SSH ポート 22) の疎通を nc -zv などで確認する。
@@ -99,7 +100,7 @@ Gate L1 - Unit tests
 	- [ ] Evidence: CI green + unit test coverage for config/policy/messages.
 
 Gate L2 - Integration
-	- [ ] Criteria: gateway healthcheck OK; doctor net.dns + h3.connect checks pass.
+	- [ ] Criteria: gateway healthcheck OK; doctor net.dns + h3.connect + tun.perm + mtu.sanity checks pass.
 	- [ ] Tests: docker compose up + healthcheck wait + doctor integration tests.
 	- [ ] Evidence: CI green with integration job.
 
@@ -111,22 +112,21 @@ Gate L3 - End-to-End
 3. 詳細プラン（次の作業）
 
 S3 - 証明書検証とトークン検証
-	- [ ] 対象コードを特定（toppy-cli doctor の h3.connect / QUIC ping と toppy-gw 側の doctor RPC）
-	- [ ] TLS 証明書検証の要件整理（CA/ピンニング/自己署名の扱いと設定項目）
-	- [ ] クライアント側に検証ロジックを追加（失敗時は doctor の check を fail）
-	- [ ] トークン検証の手順定義（署名方式、発行者/オーディエンス、期限）
-	- [ ] ゲートウェイ側でトークン検証を実装（検証失敗は明確なエラーコード）
-	- [ ] doctor の JSON 出力に理由を追加（例: cert.invalid, token.expired）
-	- [ ] 結合テストを追加（有効/無効証明書、期限切れトークン）
-	- [ ] CI にテストを追加して L2 ゲートを更新
+	- [x] 対象コードを特定（toppy-cli doctor の h3.connect / QUIC ping と toppy-gw 側）
+	- [x] CA PEM を読み込む設定項目を追加（ca_cert_path / server_name）
+	- [x] クライアント側 TLS 検証を実装（CA PEM を RootCertStore に追加）
+	- [x] ゲートウェイ側で共有トークン検証を実装（TOPPY_GW_TOKEN / auth_token）
+	- [x] 失敗理由を summary に出力（missing ca/token, token rejected）
+	- [x] 連携設定を更新（固定証明書/キー + compose + it-compose.sh）
+	- [ ] JWT 検証（署名方式/issuer/audience/exp）は将来対応
 
 S4 - TUN 権限検出 + MTU サニティチェック
-	- [ ] Linux: /dev/net/tun の存在確認と open の可否（CAP_NET_ADMIN の有無を含む）
-	- [ ] macOS: utun 作成の可否チェック（実装方針の決定と実装）
-	- [ ] MTU 推奨値の算出ロジックを定義（プロトコルオーバーヘッドを明示）
-	- [ ] 異常値のしきい値を決めて warn を返す（極端に小/大）
-	- [ ] doctor の JSON 出力に tun.perm / mtu.sanity を追加
-	- [ ] Integration テストを更新（OS 差分は条件付きで検証）
+	- [x] Linux: /dev/net/tun の存在確認と open の可否を判定
+	- [ ] macOS: utun 作成の可否チェック（未実装）
+	- [x] MTU 推奨値を 1350 に設定（<1200 / >9000 は warn）
+	- [x] 異常値のしきい値に応じた warn を実装
+	- [x] doctor の JSON 出力に tun.perm / mtu.sanity を追加
+	- [x] Integration テストを更新（tun.perm / mtu.sanity を検証）
 
 S5 - E2E TCP 到達性
 	- [ ] 対象ターゲット/ポートのテストデータを用意（許可/拒否の両方）

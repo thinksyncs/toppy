@@ -24,6 +24,10 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
      ```toml
      gateway = "127.0.0.1"
      port = 4433
+     server_name = "localhost"
+     ca_cert_path = "crates/toppy-gw/testdata/localhost-cert.pem"
+     auth_token = "dev-token"
+     mtu = 1350
      ```
 4. Run the doctor checks:
    - `cargo run -p toppy-cli -- doctor --json`

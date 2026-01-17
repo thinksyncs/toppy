@@ -8,12 +8,15 @@
 use crate::config;
 use quinn::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{DigitallySignedStruct, SignatureScheme};
+use rustls::pki_types::CertificateDer;
+use rustls::RootCertStore;
 use serde::Serialize;
 use std::env;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Cursor;
 use std::net::ToSocketAddrs;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -63,57 +66,89 @@ fn dns_check(host: &str, port: u16) -> Result<usize, String> {
     }
 }
 
-#[derive(Debug)]
-struct NoVerifier;
-
-impl ServerCertVerifier for NoVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
+fn tun_perm_check() -> DoctorCheck {
+    #[cfg(target_os = "linux")]
+    {
+        let path = "/dev/net/tun";
+        match OpenOptions::new().read(true).write(true).open(path) {
+            Ok(_) => mk("tun.perm", "pass", format!("opened {}", path)),
+            Err(e) => mk("tun.perm", "fail", format!("cannot open {}: {}", path, e)),
+        }
     }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+    #[cfg(target_os = "macos")]
+    {
+        mk("tun.perm", "warn", "utun permission check not implemented")
     }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        vec![
-            SignatureScheme::ECDSA_NISTP256_SHA256,
-            SignatureScheme::ECDSA_NISTP384_SHA384,
-            SignatureScheme::ECDSA_NISTP521_SHA512,
-            SignatureScheme::RSA_PSS_SHA256,
-            SignatureScheme::RSA_PSS_SHA384,
-            SignatureScheme::RSA_PSS_SHA512,
-            SignatureScheme::RSA_PKCS1_SHA256,
-            SignatureScheme::RSA_PKCS1_SHA384,
-            SignatureScheme::RSA_PKCS1_SHA512,
-            SignatureScheme::ED25519,
-            SignatureScheme::ED448,
-        ]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        mk(
+            "tun.perm",
+            "warn",
+            "tun permission check not supported on this OS",
+        )
     }
 }
 
-fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
+fn mtu_sanity_check(mtu: Option<u16>) -> DoctorCheck {
+    let recommended = 1350u16;
+    let min_reasonable = 1200u16;
+    let max_reasonable = 9000u16;
+    match mtu {
+        Some(value) if value < min_reasonable => mk(
+            "mtu.sanity",
+            "warn",
+            format!(
+                "mtu {} is small; recommended >= {} (target {})",
+                value, min_reasonable, recommended
+            ),
+        ),
+        Some(value) if value > max_reasonable => mk(
+            "mtu.sanity",
+            "warn",
+            format!(
+                "mtu {} is large; recommended <= {} (target {})",
+                value, max_reasonable, recommended
+            ),
+        ),
+        Some(value) => mk(
+            "mtu.sanity",
+            "pass",
+            format!("mtu {} within range (target {})", value, recommended),
+        ),
+        None => mk(
+            "mtu.sanity",
+            "warn",
+            format!("mtu not set; recommended {}", recommended),
+        ),
+    }
+}
+
+fn load_ca_certs(path: &Path) -> Result<RootCertStore, String> {
+    let data = fs::read(path)
+        .map_err(|e| format!("failed to read ca_cert_path {}: {}", path.display(), e))?;
+    let mut reader = Cursor::new(data);
+    let certs = rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<CertificateDer<'static>>, _>>()
+        .map_err(|e| format!("failed to parse CA certs from {}: {}", path.display(), e))?;
+    if certs.is_empty() {
+        return Err(format!("no CA certificates found in {}", path.display()));
+    }
+    let mut store = RootCertStore::empty();
+    for cert in certs {
+        store
+            .add(cert)
+            .map_err(|e| format!("failed to add CA cert {}: {}", path.display(), e))?;
+    }
+    Ok(store)
+}
+
+fn quic_ping_check(
+    host: &str,
+    port: u16,
+    server_name: &str,
+    ca_cert_path: Option<&str>,
+    auth_token: Option<&str>,
+) -> Result<(), String> {
     let addr = format!("{}:{}", host, port);
     let addr = addr
         .to_socket_addrs()
@@ -121,9 +156,12 @@ fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
         .next()
         .ok_or_else(|| format!("resolve {} returned no addresses", addr))?;
 
+    let ca_cert_path =
+        ca_cert_path.ok_or_else(|| "missing ca_cert_path for TLS verification".to_string())?;
+    let auth_token = auth_token.ok_or_else(|| "missing auth_token for token verification".to_string())?;
+    let ca_store = load_ca_certs(Path::new(ca_cert_path))?;
     let crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerifier))
+        .with_root_certificates(ca_store)
         .with_no_client_auth();
     let crypto = QuicClientConfig::try_from(crypto)
         .map_err(|e| format!("quic client config failed: {}", e))?;
@@ -147,7 +185,7 @@ fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
         endpoint.set_default_client_config(client_config);
 
         let connecting = endpoint
-            .connect(addr, host)
+            .connect(addr, server_name)
             .map_err(|e| format!("quic connect setup failed: {}", e))?;
         let connection = tokio::time::timeout(connect_timeout, connecting)
             .await
@@ -159,7 +197,8 @@ fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
             .map_err(|_| "quic open stream timed out".to_string())?
             .map_err(|e| format!("quic open stream failed: {}", e))?;
 
-        send.write_all(b"ping")
+        let payload = format!("ping {}", auth_token);
+        send.write_all(payload.as_bytes())
             .await
             .map_err(|e| format!("quic send failed: {}", e))?;
         send.finish()
@@ -175,6 +214,8 @@ fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
 
         if data == b"pong" {
             Ok(())
+        } else if data == b"unauthorized" {
+            Err("token rejected by gateway".to_string())
         } else {
             Err(format!("unexpected response: {:?}", data))
         }
@@ -185,7 +226,7 @@ fn quic_ping_check(host: &str, port: u16) -> Result<(), String> {
 ///
 /// Dynamic implementation:
 /// - Loads config from `TOPPY_CONFIG` or `~/.config/toppy/config.toml`
-/// - Checks DNS resolution and minimal QUIC ping for `gateway:port`
+/// - Checks DNS resolution and minimal QUIC ping for `gateway:port` with TLS and token validation
 pub fn doctor_check() -> DoctorReport {
     let mut checks: Vec<DoctorCheck> = Vec::new();
 
@@ -208,11 +249,17 @@ pub fn doctor_check() -> DoctorReport {
         }
     }
 
+    let mtu_value = cfg_res.as_ref().ok().and_then(|(cfg, _)| cfg.mtu);
+
     // 2) network reachability (basic)
     match cfg_res {
         Ok((cfg, _path)) => {
             let host = cfg.gateway.unwrap_or_else(|| "127.0.0.1".to_string());
             let port = cfg.port.unwrap_or(4433);
+            let server_name = cfg
+                .server_name
+                .clone()
+                .unwrap_or_else(|| host.clone());
             let dns_ok = match dns_check(&host, port) {
                 Ok(count) => {
                     checks.push(mk(
@@ -239,7 +286,13 @@ pub fn doctor_check() -> DoctorReport {
                 _ if !dns_ok => {
                     checks.push(mk("h3.connect", "warn", "skipped because net.dns failed"))
                 }
-                _ => match quic_ping_check(&host, port) {
+                _ => match quic_ping_check(
+                    &host,
+                    port,
+                    &server_name,
+                    cfg.ca_cert_path.as_deref(),
+                    cfg.auth_token.as_deref(),
+                ) {
                     Ok(()) => checks.push(mk(
                         "h3.connect",
                         "pass",
@@ -263,6 +316,14 @@ pub fn doctor_check() -> DoctorReport {
             ));
         }
     }
+
+    match env::var("TOPPY_DOCTOR_TUN").as_deref() {
+        Ok("pass") => checks.push(mk("tun.perm", "pass", "forced pass via TOPPY_DOCTOR_TUN")),
+        Ok("fail") => checks.push(mk("tun.perm", "fail", "forced fail via TOPPY_DOCTOR_TUN")),
+        Ok("skip") => checks.push(mk("tun.perm", "warn", "skipped via TOPPY_DOCTOR_TUN")),
+        _ => checks.push(tun_perm_check()),
+    }
+    checks.push(mtu_sanity_check(mtu_value));
 
     let overall = aggregate_overall(&checks);
     DoctorReport {
