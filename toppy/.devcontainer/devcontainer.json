@@ -1,0 +1,18 @@
+{
+  "name": "Toppy Development",
+  "image": "mcr.microsoft.com/devcontainers/rust:0-1-bullseye",
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev && cargo build --workspace",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer"
+      ],
+      "settings": {
+        "rust-analyzer.cargo.allFeatures": true,
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "forwardPorts": [4433, 4434],
+  "remoteUser": "vscode"
+}
