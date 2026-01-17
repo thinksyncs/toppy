@@ -1,28 +1,118 @@
 //! Tests for the `doctor` module.
 
-use toppy_core::doctor::{doctor_check, DoctorCheck};
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-#[test]
-fn doctor_overall_fails_if_any_check_fails() {
-    let report = doctor_check();
-    // Since the placeholder implementation includes a failing check, overall should be "fail".
-    assert_eq!(report.overall, "fail");
-    assert!(report.checks.iter().any(|c| c.status == "fail"));
+use toppy_core::doctor::doctor_check;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn unique_temp_path(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    env::temp_dir().join(format!("toppy-{prefix}-{nanos}.toml"))
+}
+
+fn write_config(path: &PathBuf, host: &str, port: u16) {
+    let data = format!(
+        "gateway = \"{}\"\nport = {}\n",
+        host.replace('"', "\\\""),
+        port
+    );
+    fs::write(path, data).expect("write config");
 }
 
 #[test]
-fn doctor_report_has_expected_checks() {
+fn doctor_passes_when_config_and_network_ok() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = unique_temp_path("doctor-pass");
+    write_config(&path, "127.0.0.1", 4433);
+    let prev = env::var("TOPPY_CONFIG").ok();
+    let prev_net = env::var("TOPPY_DOCTOR_NET").ok();
+    env::set_var("TOPPY_CONFIG", &path);
+    env::set_var("TOPPY_DOCTOR_NET", "pass");
+
     let report = doctor_check();
-    // Ensure that at least one cfg.load and net.h3 check exists in the report.
-    let mut found_cfg = false;
-    let mut found_net = false;
-    for c in &report.checks {
-        if c.id == "cfg.load" {
-            found_cfg = true;
-        } else if c.id == "net.h3" {
-            found_net = true;
-        }
+    assert_eq!(report.overall, "pass");
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.id == "cfg.load" && c.status == "pass"));
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.id == "net.h3" && c.status == "pass"));
+
+    if let Some(value) = prev {
+        env::set_var("TOPPY_CONFIG", value);
+    } else {
+        env::remove_var("TOPPY_CONFIG");
     }
-    assert!(found_cfg, "Expected cfg.load check in doctor report");
-    assert!(found_net, "Expected net.h3 check in doctor report");
+    if let Some(value) = prev_net {
+        env::set_var("TOPPY_DOCTOR_NET", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_NET");
+    }
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn doctor_warns_when_config_missing() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = unique_temp_path("doctor-missing");
+    let prev = env::var("TOPPY_CONFIG").ok();
+    let prev_net = env::var("TOPPY_DOCTOR_NET").ok();
+    env::set_var("TOPPY_CONFIG", &path);
+    env::set_var("TOPPY_DOCTOR_NET", "pass");
+
+    let report = doctor_check();
+    assert_eq!(report.overall, "fail");
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.id == "cfg.load" && c.status == "fail"));
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.id == "net.h3" && c.status == "warn"));
+
+    if let Some(value) = prev {
+        env::set_var("TOPPY_CONFIG", value);
+    } else {
+        env::remove_var("TOPPY_CONFIG");
+    }
+    if let Some(value) = prev_net {
+        env::set_var("TOPPY_DOCTOR_NET", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_NET");
+    }
+}
+
+#[test]
+fn doctor_report_includes_version() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = unique_temp_path("doctor-version");
+    let prev = env::var("TOPPY_CONFIG").ok();
+    let prev_net = env::var("TOPPY_DOCTOR_NET").ok();
+    env::set_var("TOPPY_CONFIG", &path);
+    env::set_var("TOPPY_DOCTOR_NET", "pass");
+
+    let report = doctor_check();
+    assert_eq!(report.version, env!("CARGO_PKG_VERSION"));
+
+    if let Some(value) = prev {
+        env::set_var("TOPPY_CONFIG", value);
+    } else {
+        env::remove_var("TOPPY_CONFIG");
+    }
+    if let Some(value) = prev_net {
+        env::set_var("TOPPY_DOCTOR_NET", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_NET");
+    }
 }

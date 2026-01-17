@@ -12,18 +12,30 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run diagnostic checks and output a report in JSON
-    Doctor,
+    Doctor {
+        /// Output JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Some(Commands::Doctor) => {
+        Some(Commands::Doctor { json }) => {
             // Invoke the doctor checks from toppy_core and print JSON
             let report = toppy_core::doctor::doctor_check();
-            match serde_json::to_string_pretty(&report) {
-                Ok(json) => println!("{}", json),
-                Err(e) => eprintln!("Failed to serialize doctor report: {}", e),
+            if json {
+                match serde_json::to_string_pretty(&report) {
+                    Ok(json) => println!("{}", json),
+                    Err(e) => eprintln!("Failed to serialize doctor report: {}", e),
+                }
+            } else {
+                println!("doctor: {}", report.overall);
+                println!("version: {}", report.version);
+                for check in report.checks {
+                    println!("- [{}] {}: {}", check.status, check.id, check.summary);
+                }
             }
         }
         None => {

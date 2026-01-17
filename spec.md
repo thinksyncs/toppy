@@ -43,6 +43,41 @@ S2 – ゲートウェイヘルスチェック + Compose（Gate L2：結合�
 	2.	docker compose でゲートウェイを起動し、Healthcheck が正常になることを確認する。
 	3.	toppy doctor --json に net.dns（ゲートウェイの名前解決）および h3.connect（HTTP/3 ハンドシェイク）のチェックを実装し、CI で Integration テストを実行する。
 
+2.1 進捗チェック（S0 -> S2）
+	S0: 1は完了。2-4は未着手。
+	S1: 1は完了。2-3は未着手（純粋ロジックとCIが必要）。
+	S2: 未着手。
+
+2.2 詳細TODO（粒度上げ）
+S0 – リポジトリ骨格
+	- [x] Workspace構成を確定（`crates/toppy-cli`, `crates/toppy-gw`, `crates/toppy-core`, `crates/toppy-proto`）
+	- [ ] Makefile/justfile を追加し、`fmt/clippy/test/dev/compose-up/compose-down/doctor` のエントリを定義
+	- [ ] `docker compose` 用のベースファイルを追加
+	- [ ] GitHub Actions を追加（`cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny check`）
+	- [ ] `cargo deny` の設定ファイルを追加
+	- [ ] README にクイックスタート（5分以内）を追記
+	- [ ] README にライセンス表記（Apache-2.0 または MIT）を追記
+	- [ ] README に脅威モデル概要を追記
+
+S1 – doctor コマンド v0
+	- [x] `doctor` の JSON 形式に `version/overall/checks` を固定
+	- [x] `toppy doctor --json` オプションを実装
+	- [ ] `doctor` の人間向け出力フォーマットの要件を確定（例: status並び順、色付け可否）
+	- [ ] 設定ファイルのバリデーション（必須項目/型/範囲）
+	- [ ] ポリシー評価関数のスタブとユニットテスト
+	- [ ] カプセル/制御メッセージ型の最低限定義とユニットテスト
+	- [ ] `cargo test` をCIで実行（L1ゲート）
+
+S2 – ゲートウェイヘルスチェック + Compose
+	- [ ] `toppy-gw` に `/healthz` を追加（HTTP 200/JSON）
+	- [ ] `Dockerfile` と `HEALTHCHECK` を追加
+	- [ ] `docker compose` で `toppy-gw` を起動
+	- [ ] Healthcheckの待ち合わせ手順を README に追加
+	- [ ] `doctor` に `net.dns` チェックを追加
+	- [ ] `doctor` に `h3.connect` チェックを追加（暫定OK判定も可）
+	- [ ] Integration テストを追加（compose起動 + doctor）
+	- [ ] CI で Integration テストを実行（L2ゲート）
+
 S3 – HTTP/3 接続検証（Gate L2）
 	1.	CLI からゲートウェイへの最小 RPC を実装し、HTTP/3（QUIC）接続が成立するかどうかを doctor で確認できるようにする。
 	2.	認証はこの段階ではダミートークン等で代用し、接続の成否と証明書検証に集中する。
