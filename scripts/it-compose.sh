@@ -27,7 +27,7 @@ for _ in {1..60}; do
     docker compose logs --no-color || true
     exit 1
   fi
-  if curl -fsS http://localhost:8080/healthz >/dev/null; then
+  if curl -fsS http://127.0.0.1:8080/healthz >/dev/null; then
     ready=1
     break
   fi
