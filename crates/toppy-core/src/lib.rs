@@ -9,4 +9,7 @@ pub fn greeting() -> &'static str {
     "Hello from toppy-core!"
 }
 
+pub mod config;
 pub mod doctor;
+pub mod policy;
+pub mod test_support;

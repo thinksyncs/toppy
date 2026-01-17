@@ -3,12 +3,9 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use toppy_core::doctor::doctor_check;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn unique_temp_path(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -29,7 +26,9 @@ fn write_config(path: &PathBuf, host: &str, port: u16) {
 
 #[test]
 fn doctor_passes_when_config_and_network_ok() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = toppy_core::test_support::ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let path = unique_temp_path("doctor-pass");
     write_config(&path, "127.0.0.1", 4433);
     let prev = env::var("TOPPY_CONFIG").ok();
@@ -63,7 +62,9 @@ fn doctor_passes_when_config_and_network_ok() {
 
 #[test]
 fn doctor_warns_when_config_missing() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = toppy_core::test_support::ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let path = unique_temp_path("doctor-missing");
     let prev = env::var("TOPPY_CONFIG").ok();
     let prev_net = env::var("TOPPY_DOCTOR_NET").ok();
@@ -95,7 +96,9 @@ fn doctor_warns_when_config_missing() {
 
 #[test]
 fn doctor_report_includes_version() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = toppy_core::test_support::ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let path = unique_temp_path("doctor-version");
     let prev = env::var("TOPPY_CONFIG").ok();
     let prev_net = env::var("TOPPY_DOCTOR_NET").ok();

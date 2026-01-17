@@ -5,11 +5,10 @@
 //! status (e.g. "pass", "warn", "fail"), and a summary explaining
 //! the result. The overall status is aggregated across all checks.
 
-use serde::{Deserialize, Serialize};
+use crate::config;
+use serde::Serialize;
 use std::env;
-use std::fs;
 use std::net::TcpStream;
-use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
@@ -24,43 +23,6 @@ pub struct DoctorCheck {
     pub id: String,
     pub status: String,
     pub summary: String,
-}
-
-/// Configuration structure loaded from TOML.
-///
-/// Example:
-/// ```toml
-/// gateway = "127.0.0.1"
-/// port = 4433
-/// ```
-#[derive(Deserialize, Debug)]
-struct Config {
-    gateway: Option<String>,
-    port: Option<u16>,
-}
-
-fn default_config_path() -> PathBuf {
-    // Minimal: ~/.config/toppy/config.toml
-    // (XDG support can be added later)
-    if let Some(home) = env::var_os("HOME") {
-        PathBuf::from(home)
-            .join(".config")
-            .join("toppy")
-            .join("config.toml")
-    } else {
-        PathBuf::from(".config/toppy/config.toml")
-    }
-}
-
-fn load_config() -> Result<(Config, PathBuf), String> {
-    let path = env::var("TOPPY_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| default_config_path());
-
-    let data = fs::read_to_string(&path)
-        .map_err(|e| format!("failed to read config {}: {}", path.display(), e))?;
-    let cfg: Config = toml::from_str(&data).map_err(|e| format!("failed to parse TOML: {}", e))?;
-    Ok((cfg, path))
 }
 
 fn mk(id: &str, status: &str, summary: impl Into<String>) -> DoctorCheck {
@@ -103,7 +65,11 @@ pub fn doctor_check() -> DoctorReport {
     let mut checks: Vec<DoctorCheck> = Vec::new();
 
     // 1) config load check
-    let cfg_res = load_config();
+    let cfg_res = config::load_config().and_then(|(cfg, path)| {
+        cfg.validate()
+            .map_err(|e| format!("config validation failed: {}", e))?;
+        Ok((cfg, path))
+    });
     match &cfg_res {
         Ok((_cfg, path)) => {
             checks.push(mk(
