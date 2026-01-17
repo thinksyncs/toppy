@@ -9,18 +9,35 @@ trap cleanup EXIT
 
 docker compose up -d --build
 
+service="toppy-gw"
+container_id="$(docker compose ps -q "$service")"
+if [[ -z "$container_id" ]]; then
+  echo "no container id for ${service}" >&2
+  docker compose ps
+  docker compose logs --no-color || true
+  exit 1
+fi
+
 ready=0
-for _ in {1..30}; do
+for _ in {1..60}; do
+  status="$(docker inspect -f '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+  if [[ "$status" == "exited" ]]; then
+    echo "${service} exited before healthz became ready" >&2
+    docker compose ps
+    docker compose logs --no-color || true
+    exit 1
+  fi
   if curl -fsS http://localhost:8080/healthz >/dev/null; then
     ready=1
     break
   fi
-  sleep 1
+  sleep 2
 done
 
 if [[ "$ready" -ne 1 ]]; then
   echo "healthz did not become healthy" >&2
   docker compose ps
+  docker compose logs --no-color || true
   exit 1
 fi
 
