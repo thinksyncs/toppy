@@ -1,5 +1,5 @@
 use quinn::ServerConfig;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -109,7 +109,7 @@ fn build_quic_config() -> Result<ServerConfig, String> {
     let cert_der = cert.der().clone();
     let key_der = key_pair.serialize_der();
 
-    let cert_chain = vec![CertificateDer::from(cert_der)];
+    let cert_chain = vec![cert_der];
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der));
 
     let mut server_config =

@@ -1,6 +1,15 @@
 FROM rust:1.92-slim AS builder
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      build-essential \
+      cmake \
+      nasm \
+      perl \
+      pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
