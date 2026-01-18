@@ -37,6 +37,21 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
    - `cargo run -p toppy-cli -- doctor --json`
    - Or `make doctor`
 
+### CONNECT-UDP verification (doctor)
+
+If the gateway is running and reachable, `toppy doctor` will also attempt a minimal
+CONNECT-UDP validation using HTTP/3 Extended CONNECT + HTTP Datagrams.
+
+- Start the gateway (one option):
+   - `make compose-up`
+- Run doctor:
+   - `make doctor`
+
+In the JSON output, verify these checks are `pass`:
+
+- `masque.connect_udp` (Extended CONNECT handshake)
+- `masque.connect_udp.datagram` (HTTP Datagram echo)
+
 ## Gateway healthcheck (docker compose)
 
 - `make compose-up`
@@ -48,7 +63,7 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
 
 - Short-lived credentials and default-deny policies to limit blast radius.
 - Audit logs for connection activity (planned).
-- Out of scope for MVP: full L3 VPN, non-OIDC IdPs, CONNECT-UDP.
+- Out of scope for MVP: full L3 VPN, non-OIDC IdPs, full CONNECT-UDP proxying to arbitrary UDP targets.
 
 ## License
 
