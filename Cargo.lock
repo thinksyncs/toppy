@@ -970,6 +970,7 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "quinn",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

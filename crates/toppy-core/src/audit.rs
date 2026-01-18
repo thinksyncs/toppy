@@ -88,7 +88,13 @@ fn hex_char(nibble: u8) -> char {
     }
 }
 
-fn compute_hash(version: u32, seq: u64, unix_ms: u64, event: &AuditEvent, prev_hash: Option<&str>) -> Result<String, AuditError> {
+fn compute_hash(
+    version: u32,
+    seq: u64,
+    unix_ms: u64,
+    event: &AuditEvent,
+    prev_hash: Option<&str>,
+) -> Result<String, AuditError> {
     let unsigned = AuditEntryUnsigned {
         version,
         seq,
@@ -132,10 +138,7 @@ impl AuditChainWriter {
             }
         }
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         Ok(Self {
             path,
@@ -213,7 +216,10 @@ pub fn verify_chain(path: impl AsRef<Path>) -> Result<(), AuditError> {
             entry.prev_hash.as_deref(),
         )?;
         if expected_hash != entry.hash {
-            return Err(AuditError::Invalid(format!("hash mismatch at line {}", idx + 1)));
+            return Err(AuditError::Invalid(format!(
+                "hash mismatch at line {}",
+                idx + 1
+            )));
         }
 
         expected_prev = Some(entry.hash);
@@ -246,11 +252,7 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
-        p.push(format!(
-            "toppy-audit-{}-{}",
-            name,
-            std::process::id()
-        ));
+        p.push(format!("toppy-audit-{}-{}", name, std::process::id()));
         p
     }
 
