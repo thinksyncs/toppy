@@ -10,6 +10,7 @@ pub fn greeting() -> &'static str {
 }
 
 pub mod auth;
+pub mod audit;
 pub mod config;
 pub mod doctor;
 pub mod policy;
