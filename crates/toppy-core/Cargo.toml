@@ -16,3 +16,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util"] }
 ring = "0.17"
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+http = "1.1"
+bytes = "1"

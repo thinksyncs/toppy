@@ -7,6 +7,8 @@
 
 use crate::config;
 use crate::policy::{Decision, Policy, Target};
+use bytes::Bytes;
+use h3::ext::Protocol;
 use quinn::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
 use rustls::pki_types::pem::PemObject;
@@ -285,6 +287,118 @@ fn quic_ping_check(
     })
 }
 
+fn connect_udp_handshake_check(
+    host: &str,
+    port: u16,
+    server_name: &str,
+    ca_cert_path: Option<&str>,
+    auth_token: Option<&str>,
+) -> Result<(), String> {
+    let addr = format!("{}:{}", host, port);
+    let addr = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve {} failed: {}", addr, e))?
+        .next()
+        .ok_or_else(|| format!("resolve {} returned no addresses", addr))?;
+
+    let ca_cert_path =
+        ca_cert_path.ok_or_else(|| "missing ca_cert_path for TLS verification".to_string())?;
+    let auth_token =
+        auth_token.ok_or_else(|| "missing auth_token for token verification".to_string())?;
+
+    let ca_store = load_ca_certs(Path::new(ca_cert_path))?;
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(ca_store)
+        .with_no_client_auth();
+    crypto.alpn_protocols = vec![b"h3".to_vec()];
+    let crypto = QuicClientConfig::try_from(crypto)
+        .map_err(|e| format!("quic client config failed: {}", e))?;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("tokio init failed: {}", e))?;
+
+    let connect_timeout = Duration::from_millis(1200);
+    let request_timeout = Duration::from_millis(1200);
+
+    rt.block_on(async move {
+        let mut client_config = ClientConfig::new(Arc::new(crypto));
+        client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+
+        let bind_addr = "0.0.0.0:0"
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| e.to_string())?;
+        let mut endpoint =
+            Endpoint::client(bind_addr).map_err(|e| format!("quic client setup failed: {}", e))?;
+        endpoint.set_default_client_config(client_config);
+
+        let connecting = endpoint
+            .connect(addr, server_name)
+            .map_err(|e| format!("quic connect setup failed: {}", e))?;
+        let connection = tokio::time::timeout(connect_timeout, connecting)
+            .await
+            .map_err(|_| "quic connect timed out".to_string())?
+            .map_err(|e| format!("quic connect failed: {}", e))?;
+
+        // Best-effort sanity check: ensure ALPN negotiated to h3.
+        let is_h3 = connection
+            .handshake_data()
+            .and_then(|any| any.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+            .and_then(|hs| hs.protocol)
+            .as_deref()
+            == Some(b"h3");
+        if !is_h3 {
+            connection.close(0u32.into(), b"no-h3");
+            endpoint.wait_idle().await;
+            return Err("gateway did not negotiate ALPN h3".to_string());
+        }
+
+        let quinn_conn = h3_quinn::Connection::new(connection);
+        let (mut h3_conn, mut sender) = h3::client::builder()
+            .enable_extended_connect(true)
+            .build::<_, _, Bytes>(quinn_conn)
+            .await
+            .map_err(|e| format!("h3 client init failed: {e:?}"))?;
+
+        let uri: http::Uri = format!("https://{}/.well-known/masque/udp/127.0.0.1/9/", host)
+            .parse()
+            .map_err(|e| format!("invalid uri: {e}"))?;
+
+        let mut req = http::Request::builder()
+            .method(http::Method::CONNECT)
+            .uri(uri)
+            .header("authorization", format!("Bearer {}", auth_token))
+            .body(())
+            .map_err(|e| format!("request build failed: {e}"))?;
+        req.extensions_mut().insert(Protocol::CONNECT_UDP);
+
+        let mut stream = tokio::time::timeout(request_timeout, sender.send_request(req))
+            .await
+            .map_err(|_| "h3 send_request timed out".to_string())?
+            .map_err(|e| format!("h3 send_request failed: {e:?}"))?;
+
+        let resp = tokio::time::timeout(request_timeout, stream.recv_response())
+            .await
+            .map_err(|_| "h3 recv_response timed out".to_string())?
+            .map_err(|e| format!("h3 recv_response failed: {e:?}"))?;
+
+        // Close stream and connection.
+        let _ = stream.finish().await;
+        let _ = h3_conn.shutdown(0).await;
+        let _ = h3_conn.wait_idle().await;
+        endpoint.wait_idle().await;
+
+        if resp.status() == http::StatusCode::OK {
+            Ok(())
+        } else if resp.status() == http::StatusCode::UNAUTHORIZED {
+            Err("connect-udp unauthorized".to_string())
+        } else {
+            Err(format!("connect-udp unexpected status: {}", resp.status()))
+        }
+    })
+}
+
 /// Runs a set of diagnostics and returns a report.
 ///
 /// Dynamic implementation:
@@ -340,29 +454,68 @@ pub fn doctor_check() -> DoctorReport {
 
             match env::var("TOPPY_DOCTOR_NET").as_deref() {
                 Ok("pass") => {
-                    checks.push(mk("h3.connect", "pass", "forced pass via TOPPY_DOCTOR_NET"))
+                    checks.push(mk("h3.connect", "pass", "forced pass via TOPPY_DOCTOR_NET"));
+                    checks.push(mk(
+                        "masque.connect_udp",
+                        "pass",
+                        "forced pass via TOPPY_DOCTOR_NET",
+                    ));
                 }
                 Ok("fail") => {
-                    checks.push(mk("h3.connect", "fail", "forced fail via TOPPY_DOCTOR_NET"))
+                    checks.push(mk("h3.connect", "fail", "forced fail via TOPPY_DOCTOR_NET"));
+                    checks.push(mk(
+                        "masque.connect_udp",
+                        "fail",
+                        "forced fail via TOPPY_DOCTOR_NET",
+                    ));
                 }
-                Ok("skip") => checks.push(mk("h3.connect", "warn", "skipped via TOPPY_DOCTOR_NET")),
+                Ok("skip") => {
+                    checks.push(mk("h3.connect", "warn", "skipped via TOPPY_DOCTOR_NET"));
+                    checks.push(mk(
+                        "masque.connect_udp",
+                        "warn",
+                        "skipped via TOPPY_DOCTOR_NET",
+                    ));
+                }
                 _ if !dns_ok => {
-                    checks.push(mk("h3.connect", "warn", "skipped because net.dns failed"))
+                    checks.push(mk("h3.connect", "warn", "skipped because net.dns failed"));
+                    checks.push(mk(
+                        "masque.connect_udp",
+                        "warn",
+                        "skipped because net.dns failed",
+                    ));
                 }
-                _ => match quic_ping_check(
-                    &host,
-                    port,
-                    &server_name,
-                    cfg.ca_cert_path.as_deref(),
-                    cfg.auth_token.as_deref(),
-                ) {
-                    Ok(()) => checks.push(mk(
-                        "h3.connect",
-                        "pass",
-                        format!("quic ping ok {}:{}", host, port),
-                    )),
-                    Err(e) => checks.push(mk("h3.connect", "fail", e)),
-                },
+                _ => {
+                    match quic_ping_check(
+                        &host,
+                        port,
+                        &server_name,
+                        cfg.ca_cert_path.as_deref(),
+                        cfg.auth_token.as_deref(),
+                    ) {
+                        Ok(()) => checks.push(mk(
+                            "h3.connect",
+                            "pass",
+                            format!("quic ping ok {}:{}", host, port),
+                        )),
+                        Err(e) => checks.push(mk("h3.connect", "fail", e)),
+                    }
+
+                    match connect_udp_handshake_check(
+                        &host,
+                        port,
+                        &server_name,
+                        cfg.ca_cert_path.as_deref(),
+                        cfg.auth_token.as_deref(),
+                    ) {
+                        Ok(()) => checks.push(mk(
+                            "masque.connect_udp",
+                            "pass",
+                            format!("connect-udp handshake ok {}:{}", host, port),
+                        )),
+                        Err(e) => checks.push(mk("masque.connect_udp", "fail", e)),
+                    }
+                }
             }
         }
         Err(_) => {
@@ -374,6 +527,11 @@ pub fn doctor_check() -> DoctorReport {
             ));
             checks.push(mk(
                 "h3.connect",
+                "warn",
+                "skipped because config load failed (set TOPPY_CONFIG or create ~/.config/toppy/config.toml)",
+            ));
+            checks.push(mk(
+                "masque.connect_udp",
                 "warn",
                 "skipped because config load failed (set TOPPY_CONFIG or create ~/.config/toppy/config.toml)",
             ));

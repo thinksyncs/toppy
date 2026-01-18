@@ -1,3 +1,4 @@
+use quinn::crypto::rustls::QuicServerConfig;
 use quinn::ServerConfig;
 use rustls::pki_types::pem::{Error as PemError, PemObject};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -9,6 +10,10 @@ use std::thread;
 use std::time::Duration;
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 use toppy_core::auth::{validate_jwt_hs256, JwtConfig};
+
+use bytes::Bytes;
+use h3::ext::Protocol;
+use http::StatusCode as HttpStatusCode;
 
 fn main() {
     let http_listen = env::var("TOPPY_GW_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
@@ -137,6 +142,24 @@ async fn handle_connection(
     connection: quinn::Connection,
     auth_mode: AuthMode,
 ) -> Result<(), String> {
+    let is_h3 = connection
+        .handshake_data()
+        .and_then(|any| any.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+        .and_then(|hs| hs.protocol)
+        .as_deref()
+        == Some(b"h3");
+
+    if is_h3 {
+        handle_h3_connection(connection, auth_mode).await
+    } else {
+        handle_ping_connection(connection, auth_mode).await
+    }
+}
+
+async fn handle_ping_connection(
+    connection: quinn::Connection,
+    auth_mode: AuthMode,
+) -> Result<(), String> {
     loop {
         let (mut send, mut recv) = connection
             .accept_bi()
@@ -167,13 +190,93 @@ async fn handle_connection(
             let _ = send.finish();
             continue;
         }
-        if data.starts_with(b"ping") {
-            send.write_all(b"pong")
-                .await
-                .map_err(|e| format!("quic write failed: {}", e))?;
-        }
+        send.write_all(b"pong")
+            .await
+            .map_err(|e| format!("quic write failed: {}", e))?;
         let _ = send.finish();
     }
+}
+
+async fn handle_h3_connection(
+    connection: quinn::Connection,
+    auth_mode: AuthMode,
+) -> Result<(), String> {
+    let quinn_conn = h3_quinn::Connection::new(connection);
+    let mut server_builder = h3::server::builder();
+    server_builder.enable_extended_connect(true);
+    let mut h3_conn = server_builder
+        .build::<_, Bytes>(quinn_conn)
+        .await
+        .map_err(|e| format!("h3 accept failed: {e:?}"))?;
+
+    while let Some(resolver) = h3_conn
+        .accept()
+        .await
+        .map_err(|e| format!("h3 accept request failed: {e:?}"))?
+    {
+        let (req, mut stream) = resolver
+            .resolve_request()
+            .await
+            .map_err(|e| format!("h3 resolve request failed: {e:?}"))?;
+        let is_connect = req.method() == http::Method::CONNECT;
+        let protocol = req.extensions().get::<Protocol>().copied();
+
+        if !is_connect || protocol != Some(Protocol::CONNECT_UDP) {
+            let res = http::Response::builder()
+                .status(HttpStatusCode::NOT_FOUND)
+                .body(())
+                .map_err(|e| format!("h3 response build failed: {e}"))?;
+            stream
+                .send_response(res)
+                .await
+                .map_err(|e| format!("h3 send response failed: {e:?}"))?;
+            let _ = stream.finish().await;
+            continue;
+        }
+
+        let authz = req
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok());
+        let token = authz
+            .and_then(|v| v.strip_prefix("Bearer ").or(Some(v)))
+            .map(|v| v.trim());
+        if let Err(err) = auth_mode.validate(token) {
+            let res = http::Response::builder()
+                .status(HttpStatusCode::UNAUTHORIZED)
+                .body(())
+                .map_err(|e| format!("h3 response build failed: {e}"))?;
+            stream
+                .send_response(res)
+                .await
+                .map_err(|e| format!("h3 send response failed: {e:?}"))?;
+            let _ = stream.finish().await;
+            eprintln!("connect-udp unauthorized: {err}");
+            continue;
+        }
+
+        // Minimal CONNECT-UDP handshake: accept the request.
+        let res = http::Response::builder()
+            .status(HttpStatusCode::OK)
+            .body(())
+            .map_err(|e| format!("h3 response build failed: {e}"))?;
+        stream
+            .send_response(res)
+            .await
+            .map_err(|e| format!("h3 send response failed: {e:?}"))?;
+
+        // Keep the stream open until the peer closes it.
+        while let Some(_chunk) = stream
+            .recv_data()
+            .await
+            .map_err(|e| format!("h3 recv data failed: {e:?}"))?
+        {
+            // CONNECT-UDP payload is carried in HTTP Datagrams, not stream data.
+        }
+        let _ = stream.finish().await;
+    }
+
+    Ok(())
 }
 
 fn load_cert_chain(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
@@ -223,8 +326,15 @@ fn build_quic_config(
         }
     };
 
-    let mut server_config =
-        quinn::ServerConfig::with_single_cert(cert_chain, key).map_err(|e| e.to_string())?;
+    let mut rustls_cfg = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, key)
+        .map_err(|e| e.to_string())?;
+    // Enable HTTP/3 ALPN. Non-H3 clients can still connect without ALPN.
+    rustls_cfg.alpn_protocols = vec![b"h3".to_vec()];
+    let crypto = QuicServerConfig::try_from(rustls_cfg)
+        .map_err(|e| format!("quic server crypto config failed: {e}"))?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
     let mut transport = quinn::TransportConfig::default();
     transport.max_idle_timeout(Some(
         Duration::from_secs(10)
