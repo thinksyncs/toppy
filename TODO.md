@@ -77,6 +77,13 @@ S5 - E2E TCP到達性（Gate L3：End-to-End）
 	- [x] Linux ランナー上で toppy up を実行し、許可されたターゲットへの TCP (例：SSH ポート 22) の疎通を nc -zv などで確認する。
 	- [x] 許可されていない宛先やポートへの接続が拒否されることを確認し、doctor で policy.denied の理由を返す。
 	- [ ] Windows 環境用の RDP ポート (3389) でも同様の疎通チェックを行い、必要に応じクロス OS テストを段階的に追加する（workflow_dispatch で手動実行できるジョブを追加済み）。
+		- 実行方法: GitHub Actions -> CI -> Run workflow -> `rdp_host` に RDP 先ホスト/IPv4 を入力
+		- CI 側の実装: `scripts/e2e-rdp.ps1`（`TOPPY_E2E_RDP_HOST` でターゲット指定、未指定ならスキップ）
+		- 前提: GitHub Actions の `windows-latest` ランナーから `rdp_host:3389` に到達できること（FW/NAT/セキュリティグループで 3389 を許可）
+		- 完了条件（このチェックを [x] にする条件）:
+			- allow: `toppy up --target <rdp_host>:3389` の起動後にローカル待受への TCP 接続が成功
+			- deny: `toppy up --target <rdp_host>:3390` が policy deny で失敗し、ローカル待受が開かない
+			- doctor: `policy.denied` が `fail` で、拒否理由が summary に含まれる
 
 Phase 3 以降のタスク（参考）
 	- [ ] CONNECT-UDP の追加：UDP アプリ（DoQ/ゲーム等）を通すための機能。CLI に toppy udp-proxy を追加するか、既存トンネル上に UDP カプセルを流すかを検討する。
