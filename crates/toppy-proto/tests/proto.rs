@@ -1,3 +1,4 @@
+use toppy_proto::masque::{HttpDatagram, CONNECT_UDP_CONTEXT_ID};
 use toppy_proto::{Capsule, ControlMessage};
 
 #[test]
@@ -14,4 +15,12 @@ fn control_message_terminal_detection() {
         reason: "done".to_string()
     }
     .is_terminal());
+}
+
+#[test]
+fn connect_udp_http_datagram_roundtrip() {
+    let dg = HttpDatagram::new(CONNECT_UDP_CONTEXT_ID, vec![9, 8, 7]);
+    let bytes = dg.encode().unwrap();
+    let decoded = HttpDatagram::decode(&bytes).unwrap();
+    assert_eq!(decoded, dg);
 }

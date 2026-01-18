@@ -87,6 +87,7 @@ S5 - E2E TCP到達性（Gate L3：End-to-End）
 
 Phase 3 以降のタスク（参考）
 	- [ ] CONNECT-UDP の追加：UDP アプリ（DoQ/ゲーム等）を通すための機能。CLI に toppy udp-proxy を追加するか、既存トンネル上に UDP カプセルを流すかを検討する。
+		- 進捗: `toppy-proto::masque` に HTTP Datagram（Context ID varint + payload）のエンコード/デコードを追加（CONNECT-UDP の足場）
 	- [ ] IdP 拡充：SAML や多要素認証、FIDO2 などへ対応し、CLI での使い勝手を壊さない範囲で統合する。
 	- [ ] 監査ログの改ざん耐性：署名やリモート送信先への転送による tamper proof 化を実装する。
 		- 進捗: ハッシュチェーン JSONL の writer/verify を `toppy-core::audit` に追加（適用箇所はこれから）
