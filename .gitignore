@@ -1,0 +1,12 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# Logs (CI / local runs)
+*.log
+
+# Local scratch / tmp
+/tmp/
+
+# Local patch artifacts
+/doctor_dynamic.patch

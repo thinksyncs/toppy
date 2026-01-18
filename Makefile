@@ -6,7 +6,7 @@ DOCTOR_ARGS ?= --json
 COMPOSE ?= docker compose
 COMPOSE_FILE ?= docker-compose.yml
 
-.PHONY: fmt clippy test dev doctor compose-up compose-down
+.PHONY: fmt clippy test dev doctor compose-up compose-down e2e
 
 fmt:
 	$(CARGO) fmt
@@ -28,3 +28,6 @@ compose-up:
 
 compose-down:
 	$(COMPOSE) -f $(COMPOSE_FILE) down
+
+e2e:
+	./scripts/e2e-tcp.sh

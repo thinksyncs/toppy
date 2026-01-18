@@ -74,8 +74,8 @@ S4 - TUN 権限検出 + MTU サニティチェック（Gate L2）
 	- [x] doctor の JSON 出力に tun.perm と mtu.sanity を追加し、Integration テストを更新する。
 
 S5 - E2E TCP到達性（Gate L3：End-to-End）
-	- [ ] Linux ランナー上で toppy up を実行し、許可されたターゲットへの TCP (例：SSH ポート 22) の疎通を nc -zv などで確認する。
-	- [ ] 許可されていない宛先やポートへの接続が拒否されることを確認し、doctor で policy.denied の理由を返す。
+	- [x] Linux ランナー上で toppy up を実行し、許可されたターゲットへの TCP (例：SSH ポート 22) の疎通を nc -zv などで確認する。
+	- [x] 許可されていない宛先やポートへの接続が拒否されることを確認し、doctor で policy.denied の理由を返す。
 	- [ ] Windows 環境用の RDP ポート (3389) でも同様の疎通チェックを行い、必要に応じクロス OS テストを段階的に追加する。
 
 Phase 3 以降のタスク（参考）
@@ -105,9 +105,9 @@ Gate L2 - Integration
 	- [x] Evidence: CI green with integration job.
 
 Gate L3 - End-to-End
-	- [ ] Criteria: toppy up connects to allowed targets; disallowed targets are denied with reason.
-	- [ ] Tests: nc -zv (or equivalent) against allowed/denied targets; doctor policy.denied verified.
-	- [ ] Evidence: CI green with E2E job; logs captured for audit.
+	- [x] Criteria: toppy up connects to allowed targets; disallowed targets are denied with reason.
+	- [x] Tests: nc -zv (or equivalent) against allowed/denied targets; doctor policy.denied verified.
+	- [x] Evidence: CI green with E2E job; logs captured for audit.
 
 3. 詳細プラン（次の作業）
 
@@ -118,7 +118,7 @@ S3 - 証明書検証とトークン検証
 	- [x] ゲートウェイ側で共有トークン検証を実装（TOPPY_GW_TOKEN / auth_token）
 	- [x] 失敗理由を summary に出力（missing ca/token, token rejected）
 	- [x] 連携設定を更新（固定証明書/キー + compose + it-compose.sh）
-	- [ ] JWT 検証（署名方式/issuer/audience/exp）は将来対応
+	- [x] JWT 検証（HS256/issuer/audience/exp）
 
 S4 - TUN 権限検出 + MTU サニティチェック
 	- [x] Linux: /dev/net/tun の存在確認と open の可否を判定
@@ -129,8 +129,8 @@ S4 - TUN 権限検出 + MTU サニティチェック
 	- [x] Integration テストを更新（tun.perm / mtu.sanity を検証）
 
 S5 - E2E TCP 到達性
-	- [ ] 対象ターゲット/ポートのテストデータを用意（許可/拒否の両方）
-	- [ ] toppy up を CI 環境で実行する手順を確立
-	- [ ] nc -zv 等で疎通確認し、結果を doctor に反映
-	- [ ] 拒否理由（policy.denied）を検証するテストを追加
+	- [x] 対象ターゲット/ポートのテストデータを用意（許可/拒否の両方）
+	- [x] toppy up を CI 環境で実行する手順を確立
+	- [x] nc -zv 等で疎通確認し、結果を doctor に反映
+	- [x] 拒否理由（policy.denied）を検証するテストを追加
 	- [ ] Windows RDP の検証方法を整理（段階的導入）

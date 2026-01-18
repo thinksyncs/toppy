@@ -29,6 +29,10 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
      auth_token = "dev-token"
      mtu = 1350
      ```
+
+   - JWT auth (optional):
+     - Set `TOPPY_GW_JWT_SECRET` (and optional `TOPPY_GW_JWT_ISS`, `TOPPY_GW_JWT_AUD`) in the gateway.
+     - Set `auth_token` to a JWT signed with the shared secret.
 4. Run the doctor checks:
    - `cargo run -p toppy-cli -- doctor --json`
    - Or `make doctor`
