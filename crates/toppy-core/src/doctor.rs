@@ -7,8 +7,9 @@
 
 use crate::config;
 use crate::policy::{Decision, Policy, Target};
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use h3::ext::Protocol;
+use h3_datagram::datagram_handler::HandleDatagramsExt;
 use quinn::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
 use rustls::pki_types::pem::PemObject;
@@ -357,6 +358,7 @@ fn connect_udp_handshake_check(
         let quinn_conn = h3_quinn::Connection::new(connection);
         let (mut h3_conn, mut sender) = h3::client::builder()
             .enable_extended_connect(true)
+            .enable_datagram(true)
             .build::<_, _, Bytes>(quinn_conn)
             .await
             .map_err(|e| format!("h3 client init failed: {e:?}"))?;
@@ -395,6 +397,152 @@ fn connect_udp_handshake_check(
             Err("connect-udp unauthorized".to_string())
         } else {
             Err(format!("connect-udp unexpected status: {}", resp.status()))
+        }
+    })
+}
+
+fn connect_udp_datagram_echo_check(
+    host: &str,
+    port: u16,
+    server_name: &str,
+    ca_cert_path: Option<&str>,
+    auth_token: Option<&str>,
+) -> Result<(), String> {
+    let addr = format!("{}:{}", host, port);
+    let addr = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve {} failed: {}", addr, e))?
+        .next()
+        .ok_or_else(|| format!("resolve {} returned no addresses", addr))?;
+
+    let ca_cert_path =
+        ca_cert_path.ok_or_else(|| "missing ca_cert_path for TLS verification".to_string())?;
+    let auth_token =
+        auth_token.ok_or_else(|| "missing auth_token for token verification".to_string())?;
+
+    let ca_store = load_ca_certs(Path::new(ca_cert_path))?;
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(ca_store)
+        .with_no_client_auth();
+    crypto.alpn_protocols = vec![b"h3".to_vec()];
+    let crypto = QuicClientConfig::try_from(crypto)
+        .map_err(|e| format!("quic client config failed: {}", e))?;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("tokio init failed: {}", e))?;
+
+    let connect_timeout = Duration::from_millis(1200);
+    let request_timeout = Duration::from_millis(1200);
+    let datagram_timeout = Duration::from_millis(1200);
+
+    rt.block_on(async move {
+        let mut client_config = ClientConfig::new(Arc::new(crypto));
+        client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+
+        let bind_addr = "0.0.0.0:0"
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| e.to_string())?;
+        let mut endpoint =
+            Endpoint::client(bind_addr).map_err(|e| format!("quic client setup failed: {}", e))?;
+        endpoint.set_default_client_config(client_config);
+
+        let connecting = endpoint
+            .connect(addr, server_name)
+            .map_err(|e| format!("quic connect setup failed: {}", e))?;
+        let connection = tokio::time::timeout(connect_timeout, connecting)
+            .await
+            .map_err(|_| "quic connect timed out".to_string())?
+            .map_err(|e| format!("quic connect failed: {}", e))?;
+
+        let is_h3 = connection
+            .handshake_data()
+            .and_then(|any| any.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+            .and_then(|hs| hs.protocol)
+            .as_deref()
+            == Some(b"h3");
+        if !is_h3 {
+            connection.close(0u32.into(), b"no-h3");
+            endpoint.wait_idle().await;
+            return Err("gateway did not negotiate ALPN h3".to_string());
+        }
+
+        let quinn_conn = h3_quinn::Connection::new(connection);
+        let (mut h3_conn, mut sender) = h3::client::builder()
+            .enable_extended_connect(true)
+            .enable_datagram(true)
+            .build::<_, _, Bytes>(quinn_conn)
+            .await
+            .map_err(|e| format!("h3 client init failed: {e:?}"))?;
+
+        let uri: http::Uri = format!("https://{}/.well-known/masque/udp/127.0.0.1/9/", host)
+            .parse()
+            .map_err(|e| format!("invalid uri: {e}"))?;
+
+        let mut req = http::Request::builder()
+            .method(http::Method::CONNECT)
+            .uri(uri)
+            .header("authorization", format!("Bearer {}", auth_token))
+            .body(())
+            .map_err(|e| format!("request build failed: {e}"))?;
+        req.extensions_mut().insert(Protocol::CONNECT_UDP);
+
+        let mut stream = tokio::time::timeout(request_timeout, sender.send_request(req))
+            .await
+            .map_err(|_| "h3 send_request timed out".to_string())?
+            .map_err(|e| format!("h3 send_request failed: {e:?}"))?;
+
+        let resp = tokio::time::timeout(request_timeout, stream.recv_response())
+            .await
+            .map_err(|_| "h3 recv_response timed out".to_string())?
+            .map_err(|e| format!("h3 recv_response failed: {e:?}"))?;
+
+        if resp.status() != http::StatusCode::OK {
+            let _ = stream.finish().await;
+            let _ = h3_conn.shutdown(0).await;
+            let _ = h3_conn.wait_idle().await;
+            endpoint.wait_idle().await;
+            return Err(format!("connect-udp unexpected status: {}", resp.status()));
+        }
+
+        let stream_id = stream.id();
+        let mut dg_sender = h3_conn.get_datagram_sender(stream_id);
+        let mut dg_reader = h3_conn.get_datagram_reader();
+
+        // For CONNECT-UDP, datagram payload is: varint(context_id) || payload.
+        // Context ID 0 encodes to a single 0x00 byte.
+        let probe = Bytes::from_static(b"\x00toppy-connect-udp-echo");
+        dg_sender
+            .send_datagram(probe.clone())
+            .map_err(|e| format!("send datagram failed: {e}"))?;
+
+        let echoed = tokio::time::timeout(datagram_timeout, async {
+            loop {
+                let dg = dg_reader
+                    .read_datagram()
+                    .await
+                    .map_err(|e| format!("read datagram failed: {e:?}"))?;
+                if dg.stream_id() != stream_id {
+                    continue;
+                }
+                let mut payload = dg.into_payload();
+                let bytes = payload.copy_to_bytes(payload.remaining());
+                return Ok::<Bytes, String>(bytes);
+            }
+        })
+        .await
+        .map_err(|_| "datagram echo timed out".to_string())??;
+
+        let _ = stream.finish().await;
+        let _ = h3_conn.shutdown(0).await;
+        let _ = h3_conn.wait_idle().await;
+        endpoint.wait_idle().await;
+
+        if echoed == probe {
+            Ok(())
+        } else {
+            Err("datagram echo mismatch".to_string())
         }
     })
 }
@@ -460,11 +608,21 @@ pub fn doctor_check() -> DoctorReport {
                         "pass",
                         "forced pass via TOPPY_DOCTOR_NET",
                     ));
+                    checks.push(mk(
+                        "masque.connect_udp.datagram",
+                        "pass",
+                        "forced pass via TOPPY_DOCTOR_NET",
+                    ));
                 }
                 Ok("fail") => {
                     checks.push(mk("h3.connect", "fail", "forced fail via TOPPY_DOCTOR_NET"));
                     checks.push(mk(
                         "masque.connect_udp",
+                        "fail",
+                        "forced fail via TOPPY_DOCTOR_NET",
+                    ));
+                    checks.push(mk(
+                        "masque.connect_udp.datagram",
                         "fail",
                         "forced fail via TOPPY_DOCTOR_NET",
                     ));
@@ -476,11 +634,21 @@ pub fn doctor_check() -> DoctorReport {
                         "warn",
                         "skipped via TOPPY_DOCTOR_NET",
                     ));
+                    checks.push(mk(
+                        "masque.connect_udp.datagram",
+                        "warn",
+                        "skipped via TOPPY_DOCTOR_NET",
+                    ));
                 }
                 _ if !dns_ok => {
                     checks.push(mk("h3.connect", "warn", "skipped because net.dns failed"));
                     checks.push(mk(
                         "masque.connect_udp",
+                        "warn",
+                        "skipped because net.dns failed",
+                    ));
+                    checks.push(mk(
+                        "masque.connect_udp.datagram",
                         "warn",
                         "skipped because net.dns failed",
                     ));
@@ -515,6 +683,21 @@ pub fn doctor_check() -> DoctorReport {
                         )),
                         Err(e) => checks.push(mk("masque.connect_udp", "fail", e)),
                     }
+
+                    match connect_udp_datagram_echo_check(
+                        &host,
+                        port,
+                        &server_name,
+                        cfg.ca_cert_path.as_deref(),
+                        cfg.auth_token.as_deref(),
+                    ) {
+                        Ok(()) => checks.push(mk(
+                            "masque.connect_udp.datagram",
+                            "pass",
+                            format!("connect-udp datagram echo ok {}:{}", host, port),
+                        )),
+                        Err(e) => checks.push(mk("masque.connect_udp.datagram", "fail", e)),
+                    }
                 }
             }
         }
@@ -532,6 +715,11 @@ pub fn doctor_check() -> DoctorReport {
             ));
             checks.push(mk(
                 "masque.connect_udp",
+                "warn",
+                "skipped because config load failed (set TOPPY_CONFIG or create ~/.config/toppy/config.toml)",
+            ));
+            checks.push(mk(
+                "masque.connect_udp.datagram",
                 "warn",
                 "skipped because config load failed (set TOPPY_CONFIG or create ~/.config/toppy/config.toml)",
             ));

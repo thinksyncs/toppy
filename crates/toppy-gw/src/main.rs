@@ -13,6 +13,7 @@ use toppy_core::auth::{validate_jwt_hs256, JwtConfig};
 
 use bytes::Bytes;
 use h3::ext::Protocol;
+use h3_datagram::datagram_handler::HandleDatagramsExt;
 use http::StatusCode as HttpStatusCode;
 
 fn main() {
@@ -204,6 +205,7 @@ async fn handle_h3_connection(
     let quinn_conn = h3_quinn::Connection::new(connection);
     let mut server_builder = h3::server::builder();
     server_builder.enable_extended_connect(true);
+    server_builder.enable_datagram(true);
     let mut h3_conn = server_builder
         .build::<_, Bytes>(quinn_conn)
         .await
@@ -265,13 +267,33 @@ async fn handle_h3_connection(
             .await
             .map_err(|e| format!("h3 send response failed: {e:?}"))?;
 
-        // Keep the stream open until the peer closes it.
-        while let Some(_chunk) = stream
-            .recv_data()
-            .await
-            .map_err(|e| format!("h3 recv data failed: {e:?}"))?
-        {
-            // CONNECT-UDP payload is carried in HTTP Datagrams, not stream data.
+        // Datagram echo for this CONNECT-UDP stream: any datagram associated with this
+        // request stream is echoed back verbatim.
+        let stream_id = stream.id();
+        let mut dg_sender = h3_conn.get_datagram_sender(stream_id);
+        let mut dg_reader = h3_conn.get_datagram_reader();
+
+        loop {
+            tokio::select! {
+                dg = dg_reader.read_datagram() => {
+                    let dg = dg.map_err(|e| format!("h3 recv datagram failed: {e:?}"))?;
+                    if dg.stream_id() != stream_id {
+                        continue;
+                    }
+                    let payload = dg.into_payload();
+                    dg_sender
+                        .send_datagram(payload)
+                        .map_err(|e| format!("h3 send datagram failed: {e}"))?;
+                }
+                chunk = stream.recv_data() => {
+                    match chunk.map_err(|e| format!("h3 recv data failed: {e:?}"))? {
+                        Some(_chunk) => {
+                            // CONNECT-UDP payload is carried in HTTP Datagrams, not stream data.
+                        }
+                        None => break,
+                    }
+                }
+            }
         }
         let _ = stream.finish().await;
     }
