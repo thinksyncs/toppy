@@ -38,7 +38,8 @@ PY
 wait_for_port() {
   local host="$1"
   local port="$2"
-  for _ in {1..300}; do
+  # CI can be slow on cold builds; allow more time for the proxy to start.
+  for _ in {1..1200}; do
     if tcp_check "${host}" "${port}" >/dev/null 2>&1; then
       return 0
     fi
@@ -63,6 +64,9 @@ PY
 tmpdir="$(mktemp -d)"
 config_file="${tmpdir}/config.toml"
 port_file="${tmpdir}/allowed_port"
+
+# Pre-build once to avoid racing the readiness check against a cold `cargo run` compile.
+cargo build -q -p toppy-cli
 
 python - <<'PY' "${port_file}" &
 import socket
@@ -122,7 +126,11 @@ TOPPY_CONFIG="${config_file}" \
   cargo run -q -p toppy-cli -- up --target 127.0.0.1:${allowed_port} --listen 127.0.0.1:${listen_port} &
 up_pid=$!
 
-wait_for_port 127.0.0.1 "${listen_port}"
+if ! wait_for_port 127.0.0.1 "${listen_port}"; then
+  echo "toppy up did not open listen port; dumping process state" >&2
+  ps -o pid,ppid,stat,etime,command -p "${up_pid}" 2>/dev/null || true
+  exit 1
+fi
 tcp_check 127.0.0.1 "${listen_port}"
 python - <<PY
 import socket
