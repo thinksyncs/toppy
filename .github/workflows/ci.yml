@@ -5,6 +5,12 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
+    inputs:
+      rdp_host:
+        description: "RDP target hostname or IPv4 (for Windows E2E)."
+        required: false
+        default: ""
 
 jobs:
   fmt:
@@ -53,3 +59,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: ./scripts/e2e-tcp.sh
+
+  windows-e2e-rdp:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Windows RDP E2E (optional)
+        shell: pwsh
+        env:
+          TOPPY_E2E_RDP_HOST: ${{ inputs.rdp_host }}
+        run: ./scripts/e2e-rdp.ps1

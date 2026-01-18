@@ -76,7 +76,7 @@ S4 - TUN 権限検出 + MTU サニティチェック（Gate L2）
 S5 - E2E TCP到達性（Gate L3：End-to-End）
 	- [x] Linux ランナー上で toppy up を実行し、許可されたターゲットへの TCP (例：SSH ポート 22) の疎通を nc -zv などで確認する。
 	- [x] 許可されていない宛先やポートへの接続が拒否されることを確認し、doctor で policy.denied の理由を返す。
-	- [ ] Windows 環境用の RDP ポート (3389) でも同様の疎通チェックを行い、必要に応じクロス OS テストを段階的に追加する。
+	- [ ] Windows 環境用の RDP ポート (3389) でも同様の疎通チェックを行い、必要に応じクロス OS テストを段階的に追加する（workflow_dispatch で手動実行できるジョブを追加済み）。
 
 Phase 3 以降のタスク（参考）
 	- [ ] CONNECT-UDP の追加：UDP アプリ（DoQ/ゲーム等）を通すための機能。CLI に toppy udp-proxy を追加するか、既存トンネル上に UDP カプセルを流すかを検討する。
@@ -133,4 +133,4 @@ S5 - E2E TCP 到達性
 	- [x] toppy up を CI 環境で実行する手順を確立
 	- [x] nc -zv 等で疎通確認し、結果を doctor に反映
 	- [x] 拒否理由（policy.denied）を検証するテストを追加
-	- [ ] Windows RDP の検証方法を整理（段階的導入）
+	- [x] Windows RDP の検証方法を整理（workflow_dispatch + rdp_host 入力で段階的導入）
