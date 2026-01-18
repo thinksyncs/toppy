@@ -6,15 +6,17 @@
 //! the result. The overall status is aggregated across all checks.
 
 use crate::config;
+use crate::policy::{Decision, Policy, Target};
 use quinn::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
 use rustls::RootCertStore;
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::Cursor;
+use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::sync::Arc;
@@ -174,12 +176,21 @@ fn mtu_sanity_check(mtu: Option<u16>) -> DoctorCheck {
     }
 }
 
+fn parse_policy_target(value: &str) -> Result<Target, String> {
+    let addr: SocketAddr = value
+        .parse()
+        .map_err(|e| format!("invalid target {}: {}", value, e))?;
+    Ok(Target {
+        ip: addr.ip(),
+        port: addr.port(),
+    })
+}
+
 fn load_ca_certs(path: &Path) -> Result<RootCertStore, String> {
     let data = fs::read(path)
         .map_err(|e| format!("failed to read ca_cert_path {}: {}", path.display(), e))?;
-    let mut reader = Cursor::new(data);
-    let certs = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<CertificateDer<'static>>, _>>()
+    let certs = CertificateDer::pem_slice_iter(&data)
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("failed to parse CA certs from {}: {}", path.display(), e))?;
     if certs.is_empty() {
         return Err(format!("no CA certificates found in {}", path.display()));
@@ -209,7 +220,8 @@ fn quic_ping_check(
 
     let ca_cert_path =
         ca_cert_path.ok_or_else(|| "missing ca_cert_path for TLS verification".to_string())?;
-    let auth_token = auth_token.ok_or_else(|| "missing auth_token for token verification".to_string())?;
+    let auth_token =
+        auth_token.ok_or_else(|| "missing auth_token for token verification".to_string())?;
     let ca_store = load_ca_certs(Path::new(ca_cert_path))?;
     let crypto = rustls::ClientConfig::builder()
         .with_root_certificates(ca_store)
@@ -303,14 +315,14 @@ pub fn doctor_check() -> DoctorReport {
     let mtu_value = cfg_res.as_ref().ok().and_then(|(cfg, _)| cfg.mtu);
 
     // 2) network reachability (basic)
-    match cfg_res {
+    match cfg_res.as_ref() {
         Ok((cfg, _path)) => {
-            let host = cfg.gateway.unwrap_or_else(|| "127.0.0.1".to_string());
-            let port = cfg.port.unwrap_or(4433);
-            let server_name = cfg
-                .server_name
+            let host = cfg
+                .gateway
                 .clone()
-                .unwrap_or_else(|| host.clone());
+                .unwrap_or_else(|| "127.0.0.1".to_string());
+            let port = cfg.port.unwrap_or(4433);
+            let server_name = cfg.server_name.clone().unwrap_or_else(|| host.clone());
             let dns_ok = match dns_check(&host, port) {
                 Ok(count) => {
                     checks.push(mk(
@@ -375,6 +387,37 @@ pub fn doctor_check() -> DoctorReport {
         _ => checks.push(tun_perm_check()),
     }
     checks.push(mtu_sanity_check(mtu_value));
+
+    if let Ok(target_spec) = env::var("TOPPY_DOCTOR_TARGET") {
+        match &cfg_res {
+            Ok((cfg, _)) => match parse_policy_target(&target_spec) {
+                Ok(target) => match cfg.policy.as_ref() {
+                    Some(policy_cfg) => match Policy::from_config(policy_cfg) {
+                        Ok(policy) => match policy.evaluate(&target) {
+                            Decision::Allow => checks.push(mk(
+                                "policy.denied",
+                                "pass",
+                                format!("target {}:{} allowed", target.ip, target.port),
+                            )),
+                            Decision::Deny { reason } => {
+                                checks.push(mk("policy.denied", "fail", reason))
+                            }
+                        },
+                        Err(err) => checks.push(mk("policy.denied", "fail", err)),
+                    },
+                    None => checks.push(mk("policy.denied", "warn", "policy not configured")),
+                },
+                Err(err) => {
+                    checks.push(mk("policy.denied", "fail", err));
+                }
+            },
+            Err(_) => checks.push(mk(
+                "policy.denied",
+                "warn",
+                "skipped because config load failed",
+            )),
+        }
+    }
 
     let overall = aggregate_overall(&checks);
     DoctorReport {

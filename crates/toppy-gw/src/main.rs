@@ -1,13 +1,14 @@
 use quinn::ServerConfig;
+use rustls::pki_types::pem::{Error as PemError, PemObject};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::env;
 use std::fs;
-use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tiny_http::{Header, Method, Response, Server, StatusCode};
+use toppy_core::auth::{validate_jwt_hs256, JwtConfig};
 
 fn main() {
     let http_listen = env::var("TOPPY_GW_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
@@ -56,13 +57,57 @@ fn run_healthz(listen: &str) {
     }
 }
 
+#[derive(Clone)]
+enum AuthMode {
+    None,
+    SharedToken(String),
+    Jwt(JwtConfig),
+}
+
+impl AuthMode {
+    fn from_env() -> Result<Self, String> {
+        let jwt_secret = env::var("TOPPY_GW_JWT_SECRET").ok();
+        let jwt_issuer = env::var("TOPPY_GW_JWT_ISS").ok();
+        let jwt_audience = env::var("TOPPY_GW_JWT_AUD").ok();
+        let shared_token = env::var("TOPPY_GW_TOKEN").ok();
+
+        if let Some(secret) = jwt_secret {
+            return Ok(AuthMode::Jwt(JwtConfig {
+                secret,
+                issuer: jwt_issuer,
+                audience: jwt_audience,
+            }));
+        }
+
+        if let Some(token) = shared_token {
+            return Ok(AuthMode::SharedToken(token));
+        }
+
+        Ok(AuthMode::None)
+    }
+
+    fn validate(&self, token: Option<&str>) -> Result<(), String> {
+        match self {
+            AuthMode::None => Ok(()),
+            AuthMode::SharedToken(expected) => match token {
+                Some(value) if value == expected => Ok(()),
+                _ => Err("missing or invalid token".to_string()),
+            },
+            AuthMode::Jwt(cfg) => {
+                let token = token.ok_or_else(|| "missing jwt token".to_string())?;
+                validate_jwt_hs256(token, cfg)
+            }
+        }
+    }
+}
+
 async fn run_quic(listen: &str) -> Result<(), String> {
     let addr: SocketAddr = listen
         .parse()
         .map_err(|e| format!("invalid quic listen {}: {}", listen, e))?;
     let cert_path = env::var("TOPPY_GW_CERT").ok();
     let key_path = env::var("TOPPY_GW_KEY").ok();
-    let expected_token = env::var("TOPPY_GW_TOKEN").ok();
+    let auth_mode = AuthMode::from_env()?;
     let server_config = build_quic_config(cert_path.as_deref(), key_path.as_deref())?;
     let endpoint = quinn::Endpoint::server(server_config, addr)
         .map_err(|e| format!("quic bind failed: {}", e))?;
@@ -70,11 +115,11 @@ async fn run_quic(listen: &str) -> Result<(), String> {
     println!("toppy-gw quic listening on {}", listen);
 
     while let Some(incoming) = endpoint.accept().await {
-        let expected_token = expected_token.clone();
+        let auth_mode = auth_mode.clone();
         tokio::spawn(async move {
             match incoming.await {
                 Ok(connection) => {
-                    if let Err(e) = handle_connection(connection, expected_token.as_deref()).await {
+                    if let Err(e) = handle_connection(connection, auth_mode).await {
                         eprintln!("quic connection error: {}", e);
                     }
                 }
@@ -90,7 +135,7 @@ async fn run_quic(listen: &str) -> Result<(), String> {
 
 async fn handle_connection(
     connection: quinn::Connection,
-    expected_token: Option<&str>,
+    auth_mode: AuthMode,
 ) -> Result<(), String> {
     loop {
         let (mut send, mut recv) = connection
@@ -108,22 +153,19 @@ async fn handle_connection(
         }
         let token = if data == b"ping" {
             None
-        } else if let Some(rest) = data.strip_prefix(b"ping ") {
-            Some(rest)
         } else {
-            None
+            data.strip_prefix(b"ping ")
         };
-        if let Some(expected) = expected_token {
-            let provided = token
-                .and_then(|value| std::str::from_utf8(value).ok())
-                .map(|value| value.trim());
-            if provided != Some(expected) {
-                send.write_all(b"unauthorized")
-                    .await
-                    .map_err(|e| format!("quic write failed: {}", e))?;
-                let _ = send.finish();
-                continue;
-            }
+        let provided = token
+            .and_then(|value| std::str::from_utf8(value).ok())
+            .map(|value| value.trim());
+        if let Err(err) = auth_mode.validate(provided) {
+            eprintln!("token rejected: {}", err);
+            send.write_all(b"unauthorized")
+                .await
+                .map_err(|e| format!("quic write failed: {}", e))?;
+            let _ = send.finish();
+            continue;
         }
         if data.starts_with(b"ping") {
             send.write_all(b"pong")
@@ -135,10 +177,8 @@ async fn handle_connection(
 }
 
 fn load_cert_chain(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
-    let data =
-        fs::read(path).map_err(|e| format!("failed to read cert {}: {}", path, e))?;
-    let mut reader = BufReader::new(&data[..]);
-    let certs = rustls_pemfile::certs(&mut reader)
+    let data = fs::read(path).map_err(|e| format!("failed to read cert {}: {}", path, e))?;
+    let certs = CertificateDer::pem_slice_iter(&data)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("failed to parse certs {}: {}", path, e))?;
     if certs.is_empty() {
@@ -149,13 +189,17 @@ fn load_cert_chain(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
 
 fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
     let data = fs::read(path).map_err(|e| format!("failed to read key {}: {}", path, e))?;
-    let mut reader = BufReader::new(&data[..]);
-    rustls_pemfile::private_key(&mut reader)
-        .map_err(|e| format!("failed to parse key {}: {}", path, e))?
-        .ok_or_else(|| format!("no private key found in {}", path))
+    match PrivateKeyDer::from_pem_slice(&data) {
+        Ok(key) => Ok(key),
+        Err(PemError::NoItemsFound) => Err(format!("no private key found in {}", path)),
+        Err(err) => Err(format!("failed to parse key {}: {}", path, err)),
+    }
 }
 
-fn build_quic_config(cert_path: Option<&str>, key_path: Option<&str>) -> Result<ServerConfig, String> {
+fn build_quic_config(
+    cert_path: Option<&str>,
+    key_path: Option<&str>,
+) -> Result<ServerConfig, String> {
     let (cert_chain, key) = match (cert_path, key_path) {
         (Some(cert_path), Some(key_path)) => {
             (load_cert_chain(cert_path)?, load_private_key(key_path)?)

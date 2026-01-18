@@ -1,5 +1,17 @@
 use ipnet::IpNet;
+use serde::Deserialize;
 use std::net::IpAddr;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PolicyConfig {
+    pub allow: Vec<PolicyRuleConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PolicyRuleConfig {
+    pub cidr: String,
+    pub ports: Vec<u16>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyRule {
@@ -50,6 +62,14 @@ pub enum Decision {
 }
 
 impl Policy {
+    pub fn from_config(cfg: &PolicyConfig) -> Result<Self, String> {
+        let mut allow = Vec::with_capacity(cfg.allow.len());
+        for rule in &cfg.allow {
+            allow.push(PolicyRule::parse(&rule.cidr, rule.ports.clone())?);
+        }
+        Ok(Self { allow })
+    }
+
     pub fn evaluate(&self, target: &Target) -> Decision {
         for rule in &self.allow {
             if rule.matches(target) {
@@ -93,6 +113,31 @@ mod tests {
     #[test]
     fn policy_rejects_empty_ports() {
         let err = PolicyRule::parse("10.0.0.0/24", vec![]).unwrap_err();
+        assert!(err.contains("ports"));
+    }
+
+    #[test]
+    fn policy_from_config_builds_rules() {
+        let cfg = PolicyConfig {
+            allow: vec![PolicyRuleConfig {
+                cidr: "10.0.0.0/24".to_string(),
+                ports: vec![22, 443],
+            }],
+        };
+        let policy = Policy::from_config(&cfg).expect("policy");
+        let target = Target::parse("10.0.0.5", 443).expect("target");
+        assert_eq!(policy.evaluate(&target), Decision::Allow);
+    }
+
+    #[test]
+    fn policy_from_config_rejects_empty_ports() {
+        let cfg = PolicyConfig {
+            allow: vec![PolicyRuleConfig {
+                cidr: "10.0.0.0/24".to_string(),
+                ports: vec![],
+            }],
+        };
+        let err = Policy::from_config(&cfg).unwrap_err();
         assert!(err.contains("ports"));
     }
 }

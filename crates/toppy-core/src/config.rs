@@ -1,3 +1,4 @@
+use crate::policy::{Policy, PolicyConfig};
 use serde::Deserialize;
 use std::env;
 use std::fs;
@@ -11,6 +12,7 @@ pub struct Config {
     pub server_name: Option<String>,
     pub auth_token: Option<String>,
     pub mtu: Option<u16>,
+    pub policy: Option<PolicyConfig>,
 }
 
 impl Config {
@@ -44,6 +46,9 @@ impl Config {
             if mtu == 0 {
                 return Err("mtu must be non-zero".to_string());
             }
+        }
+        if let Some(policy) = &self.policy {
+            Policy::from_config(policy)?;
         }
         Ok(())
     }
@@ -95,6 +100,7 @@ mod tests {
             server_name: None,
             auth_token: None,
             mtu: None,
+            policy: None,
         };
         assert!(cfg.validate().is_err());
     }
@@ -108,6 +114,7 @@ mod tests {
             server_name: None,
             auth_token: None,
             mtu: None,
+            policy: None,
         };
         assert!(cfg.validate().is_err());
     }
