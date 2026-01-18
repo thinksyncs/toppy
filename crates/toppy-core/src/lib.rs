@@ -13,4 +13,5 @@ pub mod auth;
 pub mod config;
 pub mod doctor;
 pub mod policy;
+pub mod rate;
 pub mod test_support;
