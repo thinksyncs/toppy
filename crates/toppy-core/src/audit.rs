@@ -1,8 +1,10 @@
 use ring::digest;
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
 pub enum AuditError {
@@ -138,6 +140,12 @@ impl AuditChainWriter {
             }
         }
 
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         Ok(Self {
@@ -175,6 +183,32 @@ impl AuditChainWriter {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+pub fn default_audit_log_path() -> PathBuf {
+    // ~/.local/share/toppy/audit.jsonl (Linux-ish); good enough for now.
+    // macOS will also work with HOME, and users can override via config/env.
+    if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("toppy")
+            .join("audit.jsonl")
+    } else {
+        PathBuf::from("toppy-audit.jsonl")
+    }
+}
+
+pub fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+pub fn append_event(path: impl AsRef<Path>, unix_ms: u64, event: AuditEvent) -> Result<AuditEntry, AuditError> {
+    let mut w = AuditChainWriter::open(path)?;
+    w.append(unix_ms, event)
 }
 
 pub fn verify_chain(path: impl AsRef<Path>) -> Result<(), AuditError> {
@@ -339,6 +373,37 @@ mod tests {
             AuditError::Invalid(_) => {}
             other => panic!("expected invalid error, got: {:?}", other),
         }
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn append_event_helper_integrates_with_verify() {
+        let path = temp_path("append-helper.jsonl");
+        let _ = fs::remove_file(&path);
+
+        append_event(
+            &path,
+            10,
+            AuditEvent {
+                actor: "alice".to_string(),
+                action: "doctor".to_string(),
+                target: "cfg".to_string(),
+                allowed: true,
+                reason: None,
+            },
+        )
+        .unwrap();
+
+        verify_chain(&path).unwrap();
+
+        // Tamper by changing a field.
+        let contents = fs::read_to_string(&path).unwrap();
+        let line = contents.lines().next().unwrap();
+        let tampered = line.replace("\"action\":\"doctor\"", "\"action\":\"up\"");
+        fs::write(&path, format!("{}\n", tampered)).unwrap();
+
+        assert!(verify_chain(&path).is_err());
 
         let _ = fs::remove_file(&path);
     }

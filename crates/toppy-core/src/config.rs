@@ -12,6 +12,7 @@ pub struct Config {
     pub server_name: Option<String>,
     pub auth_token: Option<String>,
     pub mtu: Option<u16>,
+    pub audit_log_path: Option<String>,
     pub policy: Option<PolicyConfig>,
 }
 
@@ -45,6 +46,11 @@ impl Config {
         if let Some(mtu) = self.mtu {
             if mtu == 0 {
                 return Err("mtu must be non-zero".to_string());
+            }
+        }
+        if let Some(path) = &self.audit_log_path {
+            if path.trim().is_empty() {
+                return Err("audit_log_path must not be empty".to_string());
             }
         }
         if let Some(policy) = &self.policy {
@@ -100,6 +106,7 @@ mod tests {
             server_name: None,
             auth_token: None,
             mtu: None,
+            audit_log_path: None,
             policy: None,
         };
         assert!(cfg.validate().is_err());
@@ -114,6 +121,7 @@ mod tests {
             server_name: None,
             auth_token: None,
             mtu: None,
+            audit_log_path: None,
             policy: None,
         };
         assert!(cfg.validate().is_err());
@@ -142,5 +150,20 @@ mod tests {
             env::remove_var("TOPPY_CONFIG");
         }
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn validate_rejects_empty_audit_log_path() {
+        let cfg = Config {
+            gateway: Some("127.0.0.1".to_string()),
+            port: Some(4433),
+            ca_cert_path: None,
+            server_name: None,
+            auth_token: None,
+            mtu: None,
+            audit_log_path: Some(" ".to_string()),
+            policy: None,
+        };
+        assert!(cfg.validate().is_err());
     }
 }

@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
+use toppy_core::audit::{append_event, default_audit_log_path, now_unix_ms, verify_chain, AuditEvent};
 use toppy_core::policy::{Decision, Policy, Target};
 
 /// Toppy command-line interface
@@ -33,6 +34,60 @@ enum Commands {
         #[arg(long)]
         once: bool,
     },
+
+    /// Audit log utilities
+    Audit {
+        #[command(subcommand)]
+        command: AuditCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuditCommands {
+    /// Verify the local audit log hash chain
+    Verify {
+        /// Path to the audit JSONL file
+        #[arg(long)]
+        path: Option<String>,
+    },
+}
+
+fn audit_log_path_from_env_or_config() -> Option<std::path::PathBuf> {
+    if let Ok(value) = std::env::var("TOPPY_AUDIT_LOG") {
+        let trimmed = value.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed.into());
+        }
+    }
+    if let Ok((cfg, _)) = toppy_core::config::load_config() {
+        if let Some(p) = cfg.audit_log_path {
+            let trimmed = p.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed.into());
+            }
+        }
+    }
+    None
+}
+
+fn current_actor() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn try_audit_event(action: &str, target: &str, allowed: bool, reason: Option<String>) {
+    let path = audit_log_path_from_env_or_config().unwrap_or_else(default_audit_log_path);
+    let event = AuditEvent {
+        actor: current_actor(),
+        action: action.to_string(),
+        target: target.to_string(),
+        allowed,
+        reason,
+    };
+    if let Err(err) = append_event(path, now_unix_ms(), event) {
+        eprintln!("audit log write failed: {}", err);
+    }
 }
 
 fn parse_socket_addr(label: &str, value: &str) -> Result<SocketAddr, String> {
@@ -70,6 +125,13 @@ fn main() {
         Some(Commands::Doctor { json }) => {
             // Invoke the doctor checks from toppy_core and print JSON
             let report = toppy_core::doctor::doctor_check();
+            // Best-effort audit log: record the overall outcome.
+            try_audit_event(
+                "doctor",
+                "doctor",
+                report.overall != "fail",
+                Some(format!("overall={}", report.overall)),
+            );
             if json {
                 match serde_json::to_string_pretty(&report) {
                     Ok(json) => println!("{}", json),
@@ -92,11 +154,18 @@ fn main() {
                 Ok((cfg, path)) => (cfg, path),
                 Err(err) => {
                     eprintln!("Failed to load config: {}", err);
+                    try_audit_event("up", &target, false, Some("config load failed".to_string()));
                     std::process::exit(1);
                 }
             };
             if let Err(err) = cfg.validate() {
                 eprintln!("Config validation failed ({}): {}", path.display(), err);
+                try_audit_event(
+                    "up",
+                    &target,
+                    false,
+                    Some(format!("config validation failed: {}", err)),
+                );
                 std::process::exit(1);
             }
 
@@ -133,6 +202,7 @@ fn main() {
                 Decision::Allow => {}
                 Decision::Deny { reason } => {
                     eprintln!("Policy denied: {}", reason);
+                    try_audit_event("up", &target, false, Some(reason));
                     std::process::exit(2);
                 }
             }
@@ -152,6 +222,10 @@ fn main() {
                 }
             };
             println!("toppy up listening on {} -> {}", local_addr, target_addr);
+
+            // Record that the forwarder was started. Subsequent connection failures are still
+            // reported to stderr by the proxy threads.
+            try_audit_event("up", &target, true, Some(format!("listening={}", local_addr)));
 
             for stream in listener.incoming() {
                 match stream {
@@ -178,6 +252,24 @@ fn main() {
                 }
             }
         }
+        Some(Commands::Audit { command }) => match command {
+            AuditCommands::Verify { path } => {
+                let path = path
+                    .map(std::path::PathBuf::from)
+                    .or_else(audit_log_path_from_env_or_config)
+                    .unwrap_or_else(default_audit_log_path);
+                match verify_chain(&path) {
+                    Ok(()) => {
+                        println!("audit ok: {}", path.display());
+                        std::process::exit(0);
+                    }
+                    Err(err) => {
+                        eprintln!("audit invalid: {}: {}", path.display(), err);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
         None => {
             println!("No subcommand provided. Try `toppy doctor`.");
         }
