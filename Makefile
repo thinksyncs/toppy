@@ -6,7 +6,7 @@ DOCTOR_ARGS ?= --json
 COMPOSE ?= docker compose
 COMPOSE_FILE ?= docker-compose.yml
 
-.PHONY: bootstrap fmt clippy test dev doctor compose-up compose-down e2e
+.PHONY: bootstrap fmt clippy test dev doctor audit-verify compose-up compose-down e2e
 
 bootstrap:
 	@if command -v $(CARGO) >/dev/null 2>&1; then \
@@ -40,6 +40,9 @@ dev:
 
 doctor:
 	$(CARGO) run -p $(CLI_PKG) -- doctor $(DOCTOR_ARGS)
+
+audit-verify:
+	$(CARGO) run -p $(CLI_PKG) -- audit verify
 
 compose-up:
 	$(COMPOSE) -f $(COMPOSE_FILE) up -d

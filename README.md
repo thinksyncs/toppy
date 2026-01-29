@@ -77,8 +77,23 @@ In the JSON output, verify these checks are `pass`:
 ## Threat model (summary)
 
 - Short-lived credentials and default-deny policies to limit blast radius.
-- Audit logs for connection activity (planned).
+- Audit logs for connection activity are recorded locally as tamper-evident JSONL.
 - Out of scope for MVP: full L3 VPN, non-OIDC IdPs, full CONNECT-UDP proxying to arbitrary UDP targets.
+
+## Audit logs
+
+Toppy can write a tamper-evident audit log (hash-chained JSONL) for actions like `doctor` and `up`.
+
+Audit log path resolution (highest priority first):
+
+1. `TOPPY_AUDIT_LOG` env var
+2. `audit_log_path` in `config.toml`
+3. Default: `~/.local/share/toppy/audit.jsonl`
+
+Verify the log:
+
+- `cargo run -p toppy-cli -- audit verify`
+- Or: `TOPPY_AUDIT_LOG=/path/to/audit.jsonl cargo run -p toppy-cli -- audit verify`
 
 ## License
 
