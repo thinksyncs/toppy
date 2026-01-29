@@ -63,6 +63,7 @@ jobs:
   windows-e2e-rdp:
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -71,3 +72,10 @@ jobs:
         env:
           TOPPY_E2E_RDP_HOST: ${{ inputs.rdp_host }}
         run: ./scripts/e2e-rdp.ps1
+      - name: Upload Windows RDP E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-rdp
+          path: artifacts/windows-e2e-rdp
+          if-no-files-found: warn

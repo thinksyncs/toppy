@@ -4,8 +4,31 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Resolve-IPv4 {
+  param(
+    [Parameter(Mandatory = $true)][string]$Host
+  )
+
+  # If already an IPv4 literal, return it.
+  $ipLiteral = $null
+  if ([System.Net.IPAddress]::TryParse($Host, [ref]$ipLiteral)) {
+    if ($ipLiteral.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+      return $ipLiteral.IPAddressToString
+    }
+  }
+
+  $addrs = [System.Net.Dns]::GetHostAddresses($Host) | Where-Object {
+    $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork
+  }
+  $first = $addrs | Select-Object -First 1
+  if (-not $first) {
+    throw "failed to resolve IPv4 for host: $Host"
+  }
+  return $first.IPAddressToString
+}
+
 function New-TempDir {
-  $root = [System.IO.Path]::GetTempPath()
+  $root = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
   $name = [System.Guid]::NewGuid().ToString('n')
   $path = Join-Path $root "toppy-$name"
   New-Item -ItemType Directory -Path $path | Out-Null
@@ -48,6 +71,18 @@ if ([string]::IsNullOrWhiteSpace($TargetHost)) {
   exit 0
 }
 
+$targetIp = Resolve-IPv4 -Host $TargetHost
+
+$artifactDir = if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_WORKSPACE)) {
+  Join-Path $env:GITHUB_WORKSPACE 'artifacts/windows-e2e-rdp'
+} else {
+  $null
+}
+if ($artifactDir) {
+  New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
+  Write-Host "Artifacts will be written to: $artifactDir"
+}
+
 $tmpdir = New-TempDir
 $configFile = Join-Path $tmpdir 'config.toml'
 
@@ -59,14 +94,24 @@ mtu = 1350
 
 [policy]
   [[policy.allow]]
-  cidr = \"$TargetHost/32\"
+  cidr = \"$targetIp/32\"
   ports = [3389]
 "@ | Set-Content -Path $configFile -Encoding UTF8
 
 $listenPort = Get-FreePort
 $deniedListenPort = Get-FreePort
 
-Write-Host "TargetHost=$TargetHost AllowedListenPort=$listenPort DeniedListenPort=$deniedListenPort"
+Write-Host "TargetHost=$TargetHost TargetIp=$targetIp AllowedListenPort=$listenPort DeniedListenPort=$deniedListenPort"
+
+# Fail fast if the runner can't reach the target at all.
+$reachable = Test-NetConnection -ComputerName $targetIp -Port 3389 -WarningAction SilentlyContinue
+if (-not $reachable.TcpTestSucceeded) {
+  Write-Host "Target $targetIp:3389 is not reachable from this runner. Ensure firewall/NAT allows 3389 from windows-latest."
+  exit 1
+}
+
+# Pre-build to avoid racing readiness checks against a cold compile.
+& cargo build -q -p toppy-cli
 
 # Start allowed proxy in background.
 $allowedOut = Join-Path $tmpdir 'allowed.out.log'
@@ -75,7 +120,7 @@ $allowedErr = Join-Path $tmpdir 'allowed.err.log'
 $allowedArgs = @(
   'run','-q','-p','toppy-cli','--',
   'up',
-  '--target',"${TargetHost}:3389",
+  '--target',"${targetIp}:3389",
   '--listen',"127.0.0.1:${listenPort}",
   '--once'
 )
@@ -93,13 +138,27 @@ try {
     exit 1
   }
 
-  # Attempt a TCP handshake through the proxy (this triggers the outbound connect).
-  $ok = (Test-NetConnection -ComputerName '127.0.0.1' -Port $listenPort -WarningAction SilentlyContinue).TcpTestSucceeded
-  if (-not $ok) {
-    Write-Host "Expected local proxy port to accept connections (allowed case)."
+  # Connect to the local listener. With --once, the process should then exit.
+  $client = [System.Net.Sockets.TcpClient]::new()
+  $client.Connect('127.0.0.1', $listenPort)
+  Start-Sleep -Milliseconds 200
+  $client.Close()
+
+  if (-not $proc.WaitForExit(20000)) {
+    Write-Host "Allowed proxy did not exit in time (expected --once behavior)."
+    exit 1
+  }
+  if ($proc.ExitCode -ne 0) {
+    Write-Host "Allowed proxy exited with non-zero code: $($proc.ExitCode)"
     exit 1
   }
 } finally {
+  if ($artifactDir) {
+    Copy-Item -Path $allowedOut -Destination (Join-Path $artifactDir 'allowed.out.log') -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path $allowedErr -Destination (Join-Path $artifactDir 'allowed.err.log') -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path $configFile -Destination (Join-Path $artifactDir 'config.toml') -Force -ErrorAction SilentlyContinue
+  }
+
   if ($proc -and -not $proc.HasExited) {
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
   }
@@ -109,7 +168,7 @@ try {
 $deniedArgs = @(
   'run','-q','-p','toppy-cli','--',
   'up',
-  '--target',"${TargetHost}:3390",
+  '--target',"${targetIp}:3390",
   '--listen',"127.0.0.1:${deniedListenPort}",
   '--once'
 )
@@ -120,6 +179,11 @@ $denied = Start-Process -FilePath 'cargo' -ArgumentList $deniedArgs -NoNewWindow
   -RedirectStandardOutput $deniedOut -RedirectStandardError $deniedErr `
   -WorkingDirectory (Get-Location) `
   -Environment @{ TOPPY_CONFIG = $configFile }
+
+if ($artifactDir) {
+  Copy-Item -Path $deniedOut -Destination (Join-Path $artifactDir 'denied.out.log') -Force -ErrorAction SilentlyContinue
+  Copy-Item -Path $deniedErr -Destination (Join-Path $artifactDir 'denied.err.log') -Force -ErrorAction SilentlyContinue
+}
 
 if ($denied.ExitCode -eq 0) {
   Write-Host "Expected policy denial exit code, got 0."
@@ -139,7 +203,7 @@ if ($deniedAccepts) {
 $env:TOPPY_CONFIG = $configFile
 $env:TOPPY_DOCTOR_NET = 'skip'
 $env:TOPPY_DOCTOR_TUN = 'pass'
-$env:TOPPY_DOCTOR_TARGET = "${TargetHost}:3390"
+$env:TOPPY_DOCTOR_TARGET = "${targetIp}:3390"
 
 $doctorJson = & cargo run -q -p toppy-cli -- doctor --json
 if ([string]::IsNullOrWhiteSpace($doctorJson)) {
@@ -166,6 +230,12 @@ if (-not $checks.ContainsKey('policy.denied')) {
 }
 if ($checks['policy.denied'].status -ne 'fail') {
   Write-Host "expected policy.denied fail, got $($checks['policy.denied'].status)"
+  exit 1
+}
+
+$summary = [string]$checks['policy.denied'].summary
+if ($summary -notmatch 'not allowed') {
+  Write-Host "expected denial reason in summary, got: $summary"
   exit 1
 }
 
