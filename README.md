@@ -37,6 +37,21 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
    - `cargo run -p toppy-cli -- doctor --json`
    - Or `make doctor`
 
+## Dev setup
+
+If you don't have Rust installed yet, run:
+
+- `make bootstrap`
+
+Manual install (recommended):
+
+- macOS/Linux: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` then `source ~/.cargo/env`
+- Windows: install from https://rustup.rs/
+
+After that, local quality gates:
+
+- `make fmt clippy test`
+
 ### CONNECT-UDP verification (doctor)
 
 If the gateway is running and reachable, `toppy doctor` will also attempt a minimal
