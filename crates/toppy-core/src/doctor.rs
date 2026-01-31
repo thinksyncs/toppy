@@ -18,7 +18,6 @@ use rustls::RootCertStore;
 use serde::Serialize;
 use std::env;
 use std::fs;
-use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::path::Path;
@@ -75,7 +74,11 @@ fn tun_perm_check() -> DoctorCheck {
     #[cfg(target_os = "linux")]
     {
         let path = "/dev/net/tun";
-        match OpenOptions::new().read(true).write(true).open(path) {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+        {
             Ok(_) => mk("tun.perm", "pass", format!("opened {}", path)),
             Err(e) => mk("tun.perm", "fail", format!("cannot open {}: {}", path, e)),
         }

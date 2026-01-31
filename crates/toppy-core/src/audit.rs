@@ -206,7 +206,11 @@ pub fn now_unix_ms() -> u64 {
         .as_millis() as u64
 }
 
-pub fn append_event(path: impl AsRef<Path>, unix_ms: u64, event: AuditEvent) -> Result<AuditEntry, AuditError> {
+pub fn append_event(
+    path: impl AsRef<Path>,
+    unix_ms: u64,
+    event: AuditEvent,
+) -> Result<AuditEntry, AuditError> {
     let mut w = AuditChainWriter::open(path)?;
     w.append(unix_ms, event)
 }

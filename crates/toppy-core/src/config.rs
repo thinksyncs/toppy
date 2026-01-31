@@ -5,6 +5,31 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RateLimitConfig {
+    pub bytes_per_sec: Option<u64>,
+    pub burst_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionRateLimit {
+    pub bytes_per_sec: u64,
+    pub burst_bytes: u64,
+}
+
+impl SessionRateLimit {
+    pub fn disabled() -> Self {
+        Self {
+            bytes_per_sec: 0,
+            burst_bytes: 0,
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.bytes_per_sec > 0 && self.burst_bytes > 0
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub gateway: Option<String>,
     pub port: Option<u16>,
@@ -14,9 +39,36 @@ pub struct Config {
     pub mtu: Option<u16>,
     pub audit_log_path: Option<String>,
     pub policy: Option<PolicyConfig>,
+    pub rate: Option<RateLimitConfig>,
 }
 
 impl Config {
+    const DEFAULT_SESSION_RATE_BYTES_PER_SEC: u64 = 10 * 1024 * 1024;
+
+    pub fn session_rate_limit(&self) -> SessionRateLimit {
+        if let Some(rate) = &self.rate {
+            if rate.bytes_per_sec == Some(0) && rate.burst_bytes == Some(0) {
+                return SessionRateLimit::disabled();
+            }
+        }
+
+        let bytes_per_sec = self
+            .rate
+            .as_ref()
+            .and_then(|r| r.bytes_per_sec)
+            .unwrap_or(Self::DEFAULT_SESSION_RATE_BYTES_PER_SEC);
+        let burst_bytes = self
+            .rate
+            .as_ref()
+            .and_then(|r| r.burst_bytes)
+            .unwrap_or(bytes_per_sec);
+
+        SessionRateLimit {
+            bytes_per_sec,
+            burst_bytes,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if let Some(gateway) = &self.gateway {
             if gateway.trim().is_empty() {
@@ -55,6 +107,32 @@ impl Config {
         }
         if let Some(policy) = &self.policy {
             Policy::from_config(policy)?;
+        }
+        if let Some(rate) = &self.rate {
+            let explicit_rate_zero = rate.bytes_per_sec == Some(0);
+            let explicit_burst_zero = rate.burst_bytes == Some(0);
+            if explicit_rate_zero ^ explicit_burst_zero {
+                return Err(
+                    "rate limiter disable requires both rate.bytes_per_sec=0 and rate.burst_bytes=0"
+                        .to_string(),
+                );
+            }
+
+            if explicit_rate_zero && explicit_burst_zero {
+                return Ok(());
+            }
+
+            let bytes_per_sec = rate
+                .bytes_per_sec
+                .unwrap_or(Self::DEFAULT_SESSION_RATE_BYTES_PER_SEC);
+            if bytes_per_sec == 0 {
+                return Err("rate.bytes_per_sec must be non-zero".to_string());
+            }
+
+            let burst_bytes = rate.burst_bytes.unwrap_or(bytes_per_sec);
+            if burst_bytes == 0 {
+                return Err("rate.burst_bytes must be non-zero".to_string());
+            }
         }
         Ok(())
     }
@@ -108,6 +186,7 @@ mod tests {
             mtu: None,
             audit_log_path: None,
             policy: None,
+            rate: None,
         };
         assert!(cfg.validate().is_err());
     }
@@ -123,6 +202,7 @@ mod tests {
             mtu: None,
             audit_log_path: None,
             policy: None,
+            rate: None,
         };
         assert!(cfg.validate().is_err());
     }
@@ -163,6 +243,64 @@ mod tests {
             mtu: None,
             audit_log_path: Some(" ".to_string()),
             policy: None,
+            rate: None,
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn load_config_reads_rate_limit() {
+        let _guard = crate::test_support::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let path = unique_temp_path("config-rate");
+        let data = r#"
+gateway = "127.0.0.1"
+port = 4433
+
+[rate]
+bytes_per_sec = 1234
+burst_bytes = 5678
+"#;
+        fs::write(&path, data).expect("write config");
+
+        let prev = env::var("TOPPY_CONFIG").ok();
+        env::set_var("TOPPY_CONFIG", &path);
+
+        let (cfg, _) = load_config().expect("load config");
+        assert_eq!(cfg.rate.as_ref().and_then(|r| r.bytes_per_sec), Some(1234));
+        assert_eq!(cfg.rate.as_ref().and_then(|r| r.burst_bytes), Some(5678));
+        assert_eq!(
+            cfg.session_rate_limit(),
+            SessionRateLimit {
+                bytes_per_sec: 1234,
+                burst_bytes: 5678
+            }
+        );
+
+        if let Some(value) = prev {
+            env::set_var("TOPPY_CONFIG", value);
+        } else {
+            env::remove_var("TOPPY_CONFIG");
+        }
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn validate_rejects_partial_disable_rate_limit() {
+        let cfg = Config {
+            gateway: Some("127.0.0.1".to_string()),
+            port: Some(4433),
+            ca_cert_path: None,
+            server_name: None,
+            auth_token: None,
+            mtu: None,
+            audit_log_path: None,
+            policy: None,
+            rate: Some(RateLimitConfig {
+                bytes_per_sec: Some(0),
+                burst_bytes: Some(1),
+            }),
         };
         assert!(cfg.validate().is_err());
     }

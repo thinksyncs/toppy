@@ -95,6 +95,28 @@ Verify the log:
 - `cargo run -p toppy-cli -- audit verify`
 - Or: `TOPPY_AUDIT_LOG=/path/to/audit.jsonl cargo run -p toppy-cli -- audit verify`
 
+## Session rate limiting (`toppy up`)
+
+The `toppy up` TCP forwarder applies a per-connection token-bucket rate limit to session traffic.
+
+Defaults (when `[rate]` is omitted): **10 MiB/s** with a **10 MiB burst** (per direction).
+
+Configure in `~/.config/toppy/config.toml`:
+
+```toml
+[rate]
+bytes_per_sec = 10485760
+burst_bytes = 10485760
+```
+
+Disable:
+
+```toml
+[rate]
+bytes_per_sec = 0
+burst_bytes = 0
+```
+
 ## License
 
 MIT

@@ -2,8 +2,13 @@ use clap::{Parser, Subcommand};
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
-use toppy_core::audit::{append_event, default_audit_log_path, now_unix_ms, verify_chain, AuditEvent};
+use toppy_core::audit::{
+    append_event, default_audit_log_path, now_unix_ms, verify_chain, AuditEvent,
+};
+use toppy_core::config::SessionRateLimit;
 use toppy_core::policy::{Decision, Policy, Target};
+
+mod rate_copy;
 
 /// Toppy command-line interface
 #[derive(Parser)]
@@ -96,7 +101,11 @@ fn parse_socket_addr(label: &str, value: &str) -> Result<SocketAddr, String> {
         .map_err(|e| format!("invalid {} {}: {}", label, value, e))
 }
 
-fn proxy_connection(mut inbound: TcpStream, target: SocketAddr) -> io::Result<()> {
+fn proxy_connection(
+    mut inbound: TcpStream,
+    target: SocketAddr,
+    limit: SessionRateLimit,
+) -> io::Result<()> {
     let mut outbound = TcpStream::connect(target)?;
     let _ = inbound.set_nodelay(true);
     let _ = outbound.set_nodelay(true);
@@ -104,8 +113,12 @@ fn proxy_connection(mut inbound: TcpStream, target: SocketAddr) -> io::Result<()
     let mut inbound_clone = inbound.try_clone()?;
     let mut outbound_clone = outbound.try_clone()?;
 
-    let t1 = thread::spawn(move || io::copy(&mut inbound_clone, &mut outbound));
-    let t2 = thread::spawn(move || io::copy(&mut outbound_clone, &mut inbound));
+    let t1 = thread::spawn(move || {
+        rate_copy::copy_rate_limited(&mut inbound_clone, &mut outbound, limit)
+    });
+    let t2 = thread::spawn(move || {
+        rate_copy::copy_rate_limited(&mut outbound_clone, &mut inbound, limit)
+    });
 
     let _ = t1.join();
     let _ = t2.join();
@@ -169,6 +182,8 @@ fn main() {
                 std::process::exit(1);
             }
 
+            let session_rate_limit = cfg.session_rate_limit();
+
             let target_addr = match parse_socket_addr("target", &target) {
                 Ok(addr) => addr,
                 Err(err) => {
@@ -225,7 +240,12 @@ fn main() {
 
             // Record that the forwarder was started. Subsequent connection failures are still
             // reported to stderr by the proxy threads.
-            try_audit_event("up", &target, true, Some(format!("listening={}", local_addr)));
+            try_audit_event(
+                "up",
+                &target,
+                true,
+                Some(format!("listening={}", local_addr)),
+            );
 
             for stream in listener.incoming() {
                 match stream {
@@ -237,8 +257,9 @@ fn main() {
                             break;
                         }
                         let target = target_addr;
+                        let limit = session_rate_limit;
                         thread::spawn(move || {
-                            if let Err(err) = proxy_connection(inbound, target) {
+                            if let Err(err) = proxy_connection(inbound, target, limit) {
                                 eprintln!("proxy connection failed: {}", err);
                             }
                         });

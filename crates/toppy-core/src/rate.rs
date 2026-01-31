@@ -26,6 +26,11 @@ impl TokenBucket {
         }
     }
 
+    /// Returns the configured capacity in whole tokens.
+    pub fn capacity(&self) -> u64 {
+        (self.capacity_fp / Self::FP_SCALE) as u64
+    }
+
     /// Refills tokens based on `now`.
     ///
     /// `now` should be monotonic (e.g. time since process start).
@@ -65,6 +70,30 @@ impl TokenBucket {
         } else {
             false
         }
+    }
+
+    /// Returns the minimum additional wait time required until `amount` tokens could be taken.
+    ///
+    /// - Returns `Some(Duration::ZERO)` if already available.
+    /// - Returns `None` if `amount` can never be satisfied (e.g. `amount > capacity`, or refill is zero).
+    pub fn wait_time(&mut self, amount: u64, now: Duration) -> Option<Duration> {
+        self.refill(now);
+        if amount > self.capacity() {
+            return None;
+        }
+        let needed_fp = (amount as u128) * Self::FP_SCALE;
+        if self.tokens_fp >= needed_fp {
+            return Some(Duration::ZERO);
+        }
+        if self.refill_per_sec == 0 {
+            return None;
+        }
+
+        let deficit_fp = needed_fp - self.tokens_fp;
+        let per_nano_fp = self.refill_per_sec as u128;
+        let nanos = deficit_fp.div_ceil(per_nano_fp);
+        let nanos_u64 = u64::try_from(nanos).unwrap_or(u64::MAX);
+        Some(Duration::from_nanos(nanos_u64))
     }
 
     /// Forces the bucket to be empty.
@@ -120,5 +149,33 @@ mod tests {
         // Another 500ms => total 1 token.
         bucket.refill(Duration::from_millis(1000));
         assert_eq!(bucket.available(), 1);
+    }
+
+    #[test]
+    fn wait_time_is_zero_when_available() {
+        let mut bucket = TokenBucket::new(10, 1);
+        assert_eq!(
+            bucket.wait_time(1, Duration::from_secs(0)),
+            Some(Duration::ZERO)
+        );
+    }
+
+    #[test]
+    fn wait_time_none_if_amount_exceeds_capacity() {
+        let mut bucket = TokenBucket::new(10, 1);
+        assert_eq!(bucket.wait_time(11, Duration::from_secs(0)), None);
+    }
+
+    #[test]
+    fn wait_time_matches_refill_rate() {
+        let mut bucket = TokenBucket::new(10, 1);
+        bucket.clear();
+
+        // At 1 token/sec, 2 tokens should require ~2 seconds.
+        let wait = bucket.wait_time(2, Duration::from_secs(0)).expect("wait");
+        assert!(wait >= Duration::from_secs(2));
+
+        // If we advance time past the wait, it should become available.
+        assert!(bucket.try_take(2, Duration::from_secs(3)));
     }
 }
