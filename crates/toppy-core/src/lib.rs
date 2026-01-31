@@ -16,3 +16,4 @@ pub mod doctor;
 pub mod policy;
 pub mod rate;
 pub mod test_support;
+pub mod tun;

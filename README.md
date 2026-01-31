@@ -62,6 +62,31 @@ After that, local quality gates:
 
 - `make fmt clippy test`
 
+## Windows Wintun (TUN)
+
+Toppy uses the Wintun driver to create TUN interfaces on Windows. The DLL is
+loaded at runtime (sidecar or system install), not embedded.
+
+Lookup order for `wintun.dll`:
+
+1. `TOPPY_WINTUN_DLL` (full path)
+2. `TOPPY_WINTUN_DIR` (directory containing `wintun.dll`)
+3. `wintun.dll` alongside the executable
+4. Current working directory
+
+`toppy doctor` attempts to open an adapter named `toppy-doctor`. If it does not
+exist, it creates and deletes the adapter to validate permissions. Override the
+adapter name with `TOPPY_WINTUN_ADAPTER`.
+
+### Integration test strategy (Windows TUN)
+
+- Manual smoke test (Windows host/runner):
+  1. Place `wintun.dll` and set `TOPPY_WINTUN_DLL` (or `TOPPY_WINTUN_DIR`).
+  2. Run `toppy doctor --json` and verify `tun.perm` is `pass`.
+  3. Confirm no lingering `toppy-doctor` adapter remains.
+- CI follow-up (future): add a Windows job that downloads `wintun.dll`, sets the
+  env var, runs `toppy doctor --json`, and asserts `tun.perm` is `pass`.
+
 ### CONNECT-UDP verification (doctor)
 
 If the gateway is running and reachable, `toppy doctor` will also attempt a minimal

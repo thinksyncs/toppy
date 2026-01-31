@@ -90,7 +90,17 @@ fn tun_perm_check() -> DoctorCheck {
             Err(e) => mk("tun.perm", "fail", e),
         }
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        let probe = crate::tun::windows_wintun_check();
+        let status = match probe.status {
+            crate::tun::TunProbeStatus::Pass => "pass",
+            crate::tun::TunProbeStatus::Warn => "warn",
+            crate::tun::TunProbeStatus::Fail => "fail",
+        };
+        mk("tun.perm", status, probe.summary)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         mk(
             "tun.perm",
