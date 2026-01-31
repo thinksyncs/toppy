@@ -5,7 +5,7 @@ use std::thread;
 use toppy_core::audit::{
     append_event, default_audit_log_path, now_unix_ms, verify_chain, AuditEvent,
 };
-use toppy_core::config::SessionRateLimit;
+use toppy_core::config::{ClientAuthConfig, SessionRateLimit};
 use toppy_core::policy::{Decision, Policy, Target};
 
 mod rate_copy;
@@ -26,6 +26,12 @@ enum Commands {
         /// Output JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+    },
+    /// Acquire and cache an auth token (skeleton)
+    Login {
+        /// Print the resolved token to stdout (token mode only)
+        #[arg(long)]
+        print_token: bool,
     },
     /// Start a local TCP forwarder to an allowed target
     Up {
@@ -155,6 +161,62 @@ fn main() {
                 println!("version: {}", report.version);
                 for check in report.checks {
                     println!("- [{}] {}: {}", check.status, check.id, check.summary);
+                }
+            }
+        }
+        Some(Commands::Login { print_token }) => {
+            let (cfg, path) = match toppy_core::config::load_config() {
+                Ok((cfg, path)) => (cfg, path),
+                Err(err) => {
+                    eprintln!("Failed to load config: {}", err);
+                    std::process::exit(1);
+                }
+            };
+            if let Err(err) = cfg.validate() {
+                eprintln!("Config validation failed ({}): {}", path.display(), err);
+                std::process::exit(1);
+            }
+
+            match cfg.auth.as_ref() {
+                None | Some(ClientAuthConfig::Token { .. }) => {
+                    let token = cfg
+                        .resolve_auth_token()
+                        .map_err(|e| format!("failed to resolve auth token: {}", e));
+                    match token {
+                        Ok(Some(token)) => {
+                            if print_token {
+                                println!("{}", token);
+                            } else {
+                                println!(
+                                    "auth: token mode (configured). Use `toppy up` / `toppy doctor`."
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            eprintln!(
+                                "auth: token mode requires a token. Set `auth_token = \"...\"` or `[auth] mode = \"token\"` with `token = \"...\"`."
+                            );
+                            std::process::exit(2);
+                        }
+                        Err(err) => {
+                            eprintln!("auth: {}", err);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Some(ClientAuthConfig::OidcDeviceCode { .. }) => {
+                    eprintln!("auth: OIDC device-code login is not implemented yet in this repo.");
+                    eprintln!(
+                        "For now, mint a JWT or shared token out-of-band and set `auth_token`."
+                    );
+                    std::process::exit(1);
+                }
+                Some(ClientAuthConfig::Saml { .. }) => {
+                    eprintln!("auth: direct SAML login is not implemented yet in this repo.");
+                    eprintln!(
+                        "For now, use a SAML-to-OIDC broker (or mint a JWT) and set `auth_token`."
+                    );
+                    std::process::exit(1);
                 }
             }
         }

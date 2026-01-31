@@ -33,6 +33,16 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
    - JWT auth (optional):
      - Set `TOPPY_GW_JWT_SECRET` (and optional `TOPPY_GW_JWT_ISS`, `TOPPY_GW_JWT_AUD`) in the gateway.
      - Set `auth_token` to a JWT signed with the shared secret.
+
+   - Auth mode selection (skeleton; keeps CLI UX stable):
+     - Default behavior stays the same: `auth_token` is used as-is.
+     - You can also specify an explicit mode under `[auth]`:
+       ```toml
+       [auth]
+       mode = "token"
+       token = "dev-token"
+       ```
+     - OIDC device-code and direct SAML are intentionally only config stubs for now.
 4. Run the doctor checks:
    - `cargo run -p toppy-cli -- doctor --json`
    - Or `make doctor`
@@ -78,7 +88,7 @@ In the JSON output, verify these checks are `pass`:
 
 - Short-lived credentials and default-deny policies to limit blast radius.
 - Audit logs for connection activity are recorded locally as tamper-evident JSONL.
-- Out of scope for MVP: full L3 VPN, non-OIDC IdPs, full CONNECT-UDP proxying to arbitrary UDP targets.
+- Out of scope for MVP: full L3 VPN, direct SAML integration, full CONNECT-UDP proxying to arbitrary UDP targets.
 
 ## Audit logs
 
@@ -94,6 +104,14 @@ Verify the log:
 
 - `cargo run -p toppy-cli -- audit verify`
 - Or: `TOPPY_AUDIT_LOG=/path/to/audit.jsonl cargo run -p toppy-cli -- audit verify`
+
+## IdP expansion (Phase 3 decision)
+
+For the next milestone, Toppy treats MFA and FIDO2 as **IdP concerns**, not separate client modes:
+
+- Supported now: **static token/JWT** via `auth_token` (or `[auth] mode="token"`).
+- Planned next: **OIDC device-code flow** (MFA/FIDO2 happen at the IdP during login).
+- Not supported directly: **SAML** (recommended: SAML-to-OIDC broker / federation, or mint JWT out-of-band).
 
 ## Session rate limiting (`toppy up`)
 

@@ -5,6 +5,33 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum ClientAuthConfig {
+    /// Use a static token/JWT configured locally.
+    ///
+    /// If `token` is omitted, falls back to the legacy top-level `auth_token`.
+    Token { token: Option<String> },
+
+    /// OIDC device-code flow (supports MFA/FIDO2 at the IdP).
+    ///
+    /// Skeleton only: token acquisition is not implemented in this repo yet.
+    OidcDeviceCode {
+        issuer: String,
+        client_id: String,
+        audience: Option<String>,
+        scope: Option<String>,
+    },
+
+    /// SAML login flow.
+    ///
+    /// Skeleton only: direct SAML integration is not implemented in this repo yet.
+    Saml {
+        idp_entity_id: String,
+        sp_entity_id: Option<String>,
+    },
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct RateLimitConfig {
     pub bytes_per_sec: Option<u64>,
     pub burst_bytes: Option<u64>,
@@ -36,6 +63,7 @@ pub struct Config {
     pub ca_cert_path: Option<String>,
     pub server_name: Option<String>,
     pub auth_token: Option<String>,
+    pub auth: Option<ClientAuthConfig>,
     pub mtu: Option<u16>,
     pub audit_log_path: Option<String>,
     pub policy: Option<PolicyConfig>,
@@ -44,6 +72,26 @@ pub struct Config {
 
 impl Config {
     const DEFAULT_SESSION_RATE_BYTES_PER_SEC: u64 = 10 * 1024 * 1024;
+
+    pub fn resolve_auth_token(&self) -> Result<Option<String>, String> {
+        match &self.auth {
+            None => Ok(self.auth_token.clone()),
+            Some(ClientAuthConfig::Token { token }) => {
+                if let Some(value) = token {
+                    return Ok(Some(value.clone()));
+                }
+                Ok(self.auth_token.clone())
+            }
+            Some(ClientAuthConfig::OidcDeviceCode { .. }) => Err(
+                "auth.mode=oidc_device_code is configured, but token acquisition is not implemented yet"
+                    .to_string(),
+            ),
+            Some(ClientAuthConfig::Saml { .. }) => Err(
+                "auth.mode=saml is configured, but direct SAML integration is not implemented yet"
+                    .to_string(),
+            ),
+        }
+    }
 
     pub fn session_rate_limit(&self) -> SessionRateLimit {
         if let Some(rate) = &self.rate {
@@ -93,6 +141,32 @@ impl Config {
         if let Some(auth_token) = &self.auth_token {
             if auth_token.trim().is_empty() {
                 return Err("auth_token must not be empty".to_string());
+            }
+        }
+        if let Some(auth) = &self.auth {
+            match auth {
+                ClientAuthConfig::Token { token } => {
+                    if let Some(value) = token {
+                        if value.trim().is_empty() {
+                            return Err("auth.token must not be empty".to_string());
+                        }
+                    }
+                }
+                ClientAuthConfig::OidcDeviceCode {
+                    issuer, client_id, ..
+                } => {
+                    if issuer.trim().is_empty() {
+                        return Err("auth.issuer must not be empty".to_string());
+                    }
+                    if client_id.trim().is_empty() {
+                        return Err("auth.client_id must not be empty".to_string());
+                    }
+                }
+                ClientAuthConfig::Saml { idp_entity_id, .. } => {
+                    if idp_entity_id.trim().is_empty() {
+                        return Err("auth.idp_entity_id must not be empty".to_string());
+                    }
+                }
             }
         }
         if let Some(mtu) = self.mtu {
@@ -183,6 +257,7 @@ mod tests {
             ca_cert_path: None,
             server_name: None,
             auth_token: None,
+            auth: None,
             mtu: None,
             audit_log_path: None,
             policy: None,
@@ -199,6 +274,7 @@ mod tests {
             ca_cert_path: None,
             server_name: None,
             auth_token: None,
+            auth: None,
             mtu: None,
             audit_log_path: None,
             policy: None,
@@ -240,6 +316,7 @@ mod tests {
             ca_cert_path: None,
             server_name: None,
             auth_token: None,
+            auth: None,
             mtu: None,
             audit_log_path: Some(" ".to_string()),
             policy: None,
@@ -294,6 +371,7 @@ burst_bytes = 5678
             ca_cert_path: None,
             server_name: None,
             auth_token: None,
+            auth: None,
             mtu: None,
             audit_log_path: None,
             policy: None,
@@ -303,5 +381,87 @@ burst_bytes = 5678
             }),
         };
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn load_config_reads_auth_token_mode() {
+        let _guard = crate::test_support::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let path = unique_temp_path("config-auth-token");
+        let data = r#"
+gateway = "127.0.0.1"
+port = 4433
+
+[auth]
+mode = "token"
+token = "abc"
+"#;
+        fs::write(&path, data).expect("write config");
+
+        let prev = env::var("TOPPY_CONFIG").ok();
+        env::set_var("TOPPY_CONFIG", &path);
+
+        let (cfg, _) = load_config().expect("load config");
+        assert_eq!(
+            cfg.auth,
+            Some(ClientAuthConfig::Token {
+                token: Some("abc".to_string())
+            })
+        );
+        assert_eq!(
+            cfg.resolve_auth_token().expect("resolve"),
+            Some("abc".to_string())
+        );
+
+        if let Some(value) = prev {
+            env::set_var("TOPPY_CONFIG", value);
+        } else {
+            env::remove_var("TOPPY_CONFIG");
+        }
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn resolve_auth_token_falls_back_to_legacy_field() {
+        let cfg = Config {
+            gateway: Some("127.0.0.1".to_string()),
+            port: Some(4433),
+            ca_cert_path: None,
+            server_name: None,
+            auth_token: Some("legacy".to_string()),
+            auth: Some(ClientAuthConfig::Token { token: None }),
+            mtu: None,
+            audit_log_path: None,
+            policy: None,
+            rate: None,
+        };
+        assert_eq!(
+            cfg.resolve_auth_token().expect("resolve"),
+            Some("legacy".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_auth_token_errors_for_unimplemented_modes() {
+        let cfg = Config {
+            gateway: Some("127.0.0.1".to_string()),
+            port: Some(4433),
+            ca_cert_path: None,
+            server_name: None,
+            auth_token: None,
+            auth: Some(ClientAuthConfig::OidcDeviceCode {
+                issuer: "https://issuer.example".to_string(),
+                client_id: "client".to_string(),
+                audience: None,
+                scope: None,
+            }),
+            mtu: None,
+            audit_log_path: None,
+            policy: None,
+            rate: None,
+        };
+        let err = cfg.resolve_auth_token().unwrap_err();
+        assert!(err.contains("not implemented"));
     }
 }
