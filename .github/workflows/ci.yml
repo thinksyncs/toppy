@@ -79,3 +79,49 @@ jobs:
           name: windows-e2e-rdp
           path: artifacts/windows-e2e-rdp
           if-no-files-found: warn
+
+  windows-wintun-doctor:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Download Wintun
+        shell: pwsh
+        run: |
+          $urls = @(
+            "https://www.wintun.net/builds/wintun-0.14.1.zip",
+            "https://download.wireguard.com/windows-tools/wintun-0.14.1.zip"
+          )
+          $zip = Join-Path $env:RUNNER_TEMP "wintun.zip"
+          foreach ($url in $urls) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+            } catch {
+              continue
+            }
+            if (Test-Path $zip) { break }
+          }
+          if (!(Test-Path $zip)) { throw "Failed to download wintun.zip" }
+          $dest = Join-Path $env:RUNNER_TEMP "wintun"
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $dll = Get-ChildItem -Path $dest -Recurse -Filter wintun.dll | Select-Object -First 1
+          if (!$dll) { throw "wintun.dll not found in archive" }
+          Copy-Item $dll.FullName -Destination (Join-Path $env:GITHUB_WORKSPACE "wintun.dll") -Force
+      - name: Run doctor (Wintun)
+        shell: pwsh
+        env:
+          TOPPY_WINTUN_DLL: ${{ github.workspace }}\\wintun.dll
+          TOPPY_WINTUN_ADAPTER: toppy-ci
+          TOPPY_DOCTOR_NET: skip
+          TOPPY_CONFIG: ${{ github.workspace }}\\wintun-config.toml
+        run: |
+          @'
+          gateway = "127.0.0.1"
+          port = 4433
+          mtu = 1350
+          '@ | Out-File -FilePath $env:TOPPY_CONFIG -Encoding ascii
+          $json = cargo run -p toppy-cli -- doctor --json
+          $report = $json | ConvertFrom-Json
+          $check = $report.checks | Where-Object { $_.id -eq "tun.perm" } | Select-Object -First 1
+          if (!$check) { throw "tun.perm check missing" }
+          if ($check.status -ne "pass") { throw "tun.perm status $($check.status): $($check.summary)" }

@@ -1,3 +1,4 @@
+use crate::oidc::{self, OidcDeviceCodeConfig};
 use crate::policy::{Policy, PolicyConfig};
 use serde::Deserialize;
 use std::env;
@@ -13,21 +14,23 @@ pub enum ClientAuthConfig {
     Token { token: Option<String> },
 
     /// OIDC device-code flow (supports MFA/FIDO2 at the IdP).
-    ///
-    /// Skeleton only: token acquisition is not implemented in this repo yet.
     OidcDeviceCode {
         issuer: String,
         client_id: String,
         audience: Option<String>,
         scope: Option<String>,
+        token_cache_path: Option<String>,
     },
 
-    /// SAML login flow.
-    ///
-    /// Skeleton only: direct SAML integration is not implemented in this repo yet.
+    /// SAML login flow via broker/federation.
     Saml {
         idp_entity_id: String,
         sp_entity_id: Option<String>,
+        broker_issuer: String,
+        broker_client_id: String,
+        broker_audience: Option<String>,
+        broker_scope: Option<String>,
+        token_cache_path: Option<String>,
     },
 }
 
@@ -82,14 +85,53 @@ impl Config {
                 }
                 Ok(self.auth_token.clone())
             }
-            Some(ClientAuthConfig::OidcDeviceCode { .. }) => Err(
-                "auth.mode=oidc_device_code is configured, but token acquisition is not implemented yet"
-                    .to_string(),
-            ),
-            Some(ClientAuthConfig::Saml { .. }) => Err(
-                "auth.mode=saml is configured, but direct SAML integration is not implemented yet"
-                    .to_string(),
-            ),
+            Some(ClientAuthConfig::OidcDeviceCode { .. }) => {
+                let cfg = self
+                    .oidc_device_code_config()?
+                    .ok_or_else(|| "missing oidc config".to_string())?;
+                let token = oidc::resolve_cached_access_token(&cfg)?;
+                Ok(Some(token))
+            }
+            Some(ClientAuthConfig::Saml { .. }) => {
+                let cfg = self
+                    .oidc_device_code_config()?
+                    .ok_or_else(|| "missing saml broker config".to_string())?;
+                let token = oidc::resolve_cached_access_token(&cfg)?;
+                Ok(Some(token))
+            }
+        }
+    }
+
+    pub fn oidc_device_code_config(&self) -> Result<Option<OidcDeviceCodeConfig>, String> {
+        match &self.auth {
+            Some(ClientAuthConfig::OidcDeviceCode {
+                issuer,
+                client_id,
+                audience,
+                scope,
+                token_cache_path,
+            }) => Ok(Some(OidcDeviceCodeConfig {
+                issuer: issuer.clone(),
+                client_id: client_id.clone(),
+                audience: audience.clone(),
+                scope: scope.clone(),
+                token_cache_path: token_cache_path.clone(),
+            })),
+            Some(ClientAuthConfig::Saml {
+                broker_issuer,
+                broker_client_id,
+                broker_audience,
+                broker_scope,
+                token_cache_path,
+                ..
+            }) => Ok(Some(OidcDeviceCodeConfig {
+                issuer: broker_issuer.clone(),
+                client_id: broker_client_id.clone(),
+                audience: broker_audience.clone(),
+                scope: broker_scope.clone(),
+                token_cache_path: token_cache_path.clone(),
+            })),
+            _ => Ok(None),
         }
     }
 
@@ -153,7 +195,10 @@ impl Config {
                     }
                 }
                 ClientAuthConfig::OidcDeviceCode {
-                    issuer, client_id, ..
+                    issuer,
+                    client_id,
+                    token_cache_path,
+                    ..
                 } => {
                     if issuer.trim().is_empty() {
                         return Err("auth.issuer must not be empty".to_string());
@@ -161,10 +206,32 @@ impl Config {
                     if client_id.trim().is_empty() {
                         return Err("auth.client_id must not be empty".to_string());
                     }
+                    if let Some(path) = token_cache_path {
+                        if path.trim().is_empty() {
+                            return Err("auth.token_cache_path must not be empty".to_string());
+                        }
+                    }
                 }
-                ClientAuthConfig::Saml { idp_entity_id, .. } => {
+                ClientAuthConfig::Saml {
+                    idp_entity_id,
+                    broker_issuer,
+                    broker_client_id,
+                    token_cache_path,
+                    ..
+                } => {
                     if idp_entity_id.trim().is_empty() {
                         return Err("auth.idp_entity_id must not be empty".to_string());
+                    }
+                    if broker_issuer.trim().is_empty() {
+                        return Err("auth.broker_issuer must not be empty".to_string());
+                    }
+                    if broker_client_id.trim().is_empty() {
+                        return Err("auth.broker_client_id must not be empty".to_string());
+                    }
+                    if let Some(path) = token_cache_path {
+                        if path.trim().is_empty() {
+                            return Err("auth.token_cache_path must not be empty".to_string());
+                        }
                     }
                 }
             }
@@ -423,6 +490,96 @@ token = "abc"
     }
 
     #[test]
+    fn load_config_reads_oidc_device_code_mode() {
+        let _guard = crate::test_support::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let path = unique_temp_path("config-auth-oidc");
+        let data = r#"
+gateway = "127.0.0.1"
+port = 4433
+
+[auth]
+mode = "oidc_device_code"
+issuer = "https://issuer.example"
+client_id = "client-123"
+audience = "toppy"
+scope = "openid"
+token_cache_path = "/tmp/toppy-oidc-cache.json"
+"#;
+        fs::write(&path, data).expect("write config");
+
+        let prev = env::var("TOPPY_CONFIG").ok();
+        env::set_var("TOPPY_CONFIG", &path);
+
+        let (cfg, _) = load_config().expect("load config");
+        assert_eq!(
+            cfg.auth,
+            Some(ClientAuthConfig::OidcDeviceCode {
+                issuer: "https://issuer.example".to_string(),
+                client_id: "client-123".to_string(),
+                audience: Some("toppy".to_string()),
+                scope: Some("openid".to_string()),
+                token_cache_path: Some("/tmp/toppy-oidc-cache.json".to_string()),
+            })
+        );
+
+        if let Some(value) = prev {
+            env::set_var("TOPPY_CONFIG", value);
+        } else {
+            env::remove_var("TOPPY_CONFIG");
+        }
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_config_reads_saml_broker_mode() {
+        let _guard = crate::test_support::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let path = unique_temp_path("config-auth-saml");
+        let data = r#"
+gateway = "127.0.0.1"
+port = 4433
+
+[auth]
+mode = "saml"
+idp_entity_id = "https://idp.example/saml"
+sp_entity_id = "toppy-sp"
+broker_issuer = "https://broker.example"
+broker_client_id = "broker-client"
+broker_audience = "toppy"
+broker_scope = "openid"
+token_cache_path = "/tmp/toppy-saml-cache.json"
+"#;
+        fs::write(&path, data).expect("write config");
+
+        let prev = env::var("TOPPY_CONFIG").ok();
+        env::set_var("TOPPY_CONFIG", &path);
+
+        let (cfg, _) = load_config().expect("load config");
+        assert_eq!(
+            cfg.auth,
+            Some(ClientAuthConfig::Saml {
+                idp_entity_id: "https://idp.example/saml".to_string(),
+                sp_entity_id: Some("toppy-sp".to_string()),
+                broker_issuer: "https://broker.example".to_string(),
+                broker_client_id: "broker-client".to_string(),
+                broker_audience: Some("toppy".to_string()),
+                broker_scope: Some("openid".to_string()),
+                token_cache_path: Some("/tmp/toppy-saml-cache.json".to_string()),
+            })
+        );
+
+        if let Some(value) = prev {
+            env::set_var("TOPPY_CONFIG", value);
+        } else {
+            env::remove_var("TOPPY_CONFIG");
+        }
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
     fn resolve_auth_token_falls_back_to_legacy_field() {
         let cfg = Config {
             gateway: Some("127.0.0.1".to_string()),
@@ -455,6 +612,12 @@ token = "abc"
                 client_id: "client".to_string(),
                 audience: None,
                 scope: None,
+                token_cache_path: Some(
+                    env::temp_dir()
+                        .join("toppy-oidc-missing.json")
+                        .to_string_lossy()
+                        .to_string(),
+                ),
             }),
             mtu: None,
             audit_log_path: None,
@@ -462,6 +625,6 @@ token = "abc"
             rate: None,
         };
         let err = cfg.resolve_auth_token().unwrap_err();
-        assert!(err.contains("not implemented"));
+        assert!(err.contains("no cached token"));
     }
 }

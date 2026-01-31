@@ -598,6 +598,10 @@ pub fn doctor_check() -> DoctorReport {
                 .unwrap_or_else(|| "127.0.0.1".to_string());
             let port = cfg.port.unwrap_or(4433);
             let server_name = cfg.server_name.clone().unwrap_or_else(|| host.clone());
+            let (auth_token, auth_error) = match cfg.resolve_auth_token() {
+                Ok(token) => (token, None),
+                Err(err) => (None, Some(err)),
+            };
             let dns_ok = match dns_check(&host, port) {
                 Ok(count) => {
                     checks.push(mk(
@@ -667,49 +671,57 @@ pub fn doctor_check() -> DoctorReport {
                     ));
                 }
                 _ => {
-                    match quic_ping_check(
-                        &host,
-                        port,
-                        &server_name,
-                        cfg.ca_cert_path.as_deref(),
-                        cfg.auth_token.as_deref(),
-                    ) {
-                        Ok(()) => checks.push(mk(
-                            "h3.connect",
-                            "pass",
-                            format!("quic ping ok {}:{}", host, port),
-                        )),
-                        Err(e) => checks.push(mk("h3.connect", "fail", e)),
-                    }
+                    if let Some(err) = auth_error {
+                        let msg = format!("auth token unavailable: {}", err);
+                        checks.push(mk("h3.connect", "fail", msg.clone()));
+                        checks.push(mk("masque.connect_udp", "fail", msg.clone()));
+                        checks.push(mk("masque.connect_udp.datagram", "fail", msg));
+                    } else {
+                        let auth_token = auth_token.as_deref();
+                        match quic_ping_check(
+                            &host,
+                            port,
+                            &server_name,
+                            cfg.ca_cert_path.as_deref(),
+                            auth_token,
+                        ) {
+                            Ok(()) => checks.push(mk(
+                                "h3.connect",
+                                "pass",
+                                format!("quic ping ok {}:{}", host, port),
+                            )),
+                            Err(e) => checks.push(mk("h3.connect", "fail", e)),
+                        }
 
-                    match connect_udp_handshake_check(
-                        &host,
-                        port,
-                        &server_name,
-                        cfg.ca_cert_path.as_deref(),
-                        cfg.auth_token.as_deref(),
-                    ) {
-                        Ok(()) => checks.push(mk(
-                            "masque.connect_udp",
-                            "pass",
-                            format!("connect-udp handshake ok {}:{}", host, port),
-                        )),
-                        Err(e) => checks.push(mk("masque.connect_udp", "fail", e)),
-                    }
+                        match connect_udp_handshake_check(
+                            &host,
+                            port,
+                            &server_name,
+                            cfg.ca_cert_path.as_deref(),
+                            auth_token,
+                        ) {
+                            Ok(()) => checks.push(mk(
+                                "masque.connect_udp",
+                                "pass",
+                                format!("connect-udp handshake ok {}:{}", host, port),
+                            )),
+                            Err(e) => checks.push(mk("masque.connect_udp", "fail", e)),
+                        }
 
-                    match connect_udp_datagram_echo_check(
-                        &host,
-                        port,
-                        &server_name,
-                        cfg.ca_cert_path.as_deref(),
-                        cfg.auth_token.as_deref(),
-                    ) {
-                        Ok(()) => checks.push(mk(
-                            "masque.connect_udp.datagram",
-                            "pass",
-                            format!("connect-udp datagram echo ok {}:{}", host, port),
-                        )),
-                        Err(e) => checks.push(mk("masque.connect_udp.datagram", "fail", e)),
+                        match connect_udp_datagram_echo_check(
+                            &host,
+                            port,
+                            &server_name,
+                            cfg.ca_cert_path.as_deref(),
+                            auth_token,
+                        ) {
+                            Ok(()) => checks.push(mk(
+                                "masque.connect_udp.datagram",
+                                "pass",
+                                format!("connect-udp datagram echo ok {}:{}", host, port),
+                            )),
+                            Err(e) => checks.push(mk("masque.connect_udp.datagram", "fail", e)),
+                        }
                     }
                 }
             }

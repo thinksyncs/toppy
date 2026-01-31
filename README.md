@@ -34,7 +34,7 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
      - Set `TOPPY_GW_JWT_SECRET` (and optional `TOPPY_GW_JWT_ISS`, `TOPPY_GW_JWT_AUD`) in the gateway.
      - Set `auth_token` to a JWT signed with the shared secret.
 
-   - Auth mode selection (skeleton; keeps CLI UX stable):
+   - Auth mode selection:
      - Default behavior stays the same: `auth_token` is used as-is.
      - You can also specify an explicit mode under `[auth]`:
        ```toml
@@ -42,7 +42,31 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
        mode = "token"
        token = "dev-token"
        ```
-     - OIDC device-code and direct SAML are intentionally only config stubs for now.
+     - OIDC device-code login:
+       ```toml
+       [auth]
+       mode = "oidc_device_code"
+       issuer = "https://issuer.example"
+       client_id = "toppy-cli"
+       audience = "toppy"              # optional
+       scope = "openid offline_access" # optional (defaults to openid/offline_access)
+       token_cache_path = "/path/to/oidc-token.json" # optional
+       ```
+       - Run `toppy login` to complete the device-code flow and cache a token.
+       - `toppy doctor` uses the cached token and refreshes it if possible.
+     - SAML via broker/federation:
+       ```toml
+       [auth]
+       mode = "saml"
+       idp_entity_id = "https://idp.example/saml"
+       sp_entity_id = "toppy-sp"               # optional
+       broker_issuer = "https://broker.example"
+       broker_client_id = "toppy-cli"
+       broker_audience = "toppy"               # optional
+       broker_scope = "openid offline_access"  # optional
+       token_cache_path = "/path/to/saml-token.json" # optional
+       ```
+       - `toppy login` runs OIDC device-code against the broker.
 4. Run the doctor checks:
    - `cargo run -p toppy-cli -- doctor --json`
    - Or `make doctor`
@@ -84,8 +108,8 @@ adapter name with `TOPPY_WINTUN_ADAPTER`.
   1. Place `wintun.dll` and set `TOPPY_WINTUN_DLL` (or `TOPPY_WINTUN_DIR`).
   2. Run `toppy doctor --json` and verify `tun.perm` is `pass`.
   3. Confirm no lingering `toppy-doctor` adapter remains.
-- CI follow-up (future): add a Windows job that downloads `wintun.dll`, sets the
-  env var, runs `toppy doctor --json`, and asserts `tun.perm` is `pass`.
+- CI: `windows-wintun-doctor` downloads `wintun.dll`, sets the env var,
+  runs `toppy doctor --json`, and asserts `tun.perm` is `pass`.
 
 ### CONNECT-UDP verification (doctor)
 
@@ -135,8 +159,8 @@ Verify the log:
 For the next milestone, Toppy treats MFA and FIDO2 as **IdP concerns**, not separate client modes:
 
 - Supported now: **static token/JWT** via `auth_token` (or `[auth] mode="token"`).
-- Planned next: **OIDC device-code flow** (MFA/FIDO2 happen at the IdP during login).
-- Not supported directly: **SAML** (recommended: SAML-to-OIDC broker / federation, or mint JWT out-of-band).
+- Supported now: **OIDC device-code flow** (MFA/FIDO2 happen at the IdP during login).
+- Supported via broker: **SAML** (recommended: SAML-to-OIDC broker / federation, or mint JWT out-of-band).
 
 ## Session rate limiting (`toppy up`)
 

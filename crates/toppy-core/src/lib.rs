@@ -13,6 +13,7 @@ pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod doctor;
+pub mod oidc;
 pub mod policy;
 pub mod rate;
 pub mod test_support;

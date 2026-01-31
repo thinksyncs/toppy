@@ -6,6 +6,7 @@ use toppy_core::audit::{
     append_event, default_audit_log_path, now_unix_ms, verify_chain, AuditEvent,
 };
 use toppy_core::config::{ClientAuthConfig, SessionRateLimit};
+use toppy_core::oidc;
 use toppy_core::policy::{Decision, Policy, Target};
 
 mod rate_copy;
@@ -27,7 +28,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Acquire and cache an auth token (skeleton)
+    /// Acquire and cache an auth token
     Login {
         /// Print the resolved token to stdout (token mode only)
         #[arg(long)]
@@ -205,18 +206,122 @@ fn main() {
                     }
                 }
                 Some(ClientAuthConfig::OidcDeviceCode { .. }) => {
-                    eprintln!("auth: OIDC device-code login is not implemented yet in this repo.");
-                    eprintln!(
-                        "For now, mint a JWT or shared token out-of-band and set `auth_token`."
-                    );
-                    std::process::exit(1);
+                    let oidc_cfg = match cfg.oidc_device_code_config() {
+                        Ok(Some(cfg)) => cfg,
+                        Ok(None) => {
+                            eprintln!("auth: OIDC config missing");
+                            std::process::exit(3);
+                        }
+                        Err(err) => {
+                            eprintln!("auth: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+
+                    let provider = match oidc::discover_provider(&oidc_cfg.issuer) {
+                        Ok(provider) => provider,
+                        Err(err) => {
+                            eprintln!("auth: oidc discovery failed: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+                    let device = match oidc::request_device_code(&provider, &oidc_cfg) {
+                        Ok(device) => device,
+                        Err(err) => {
+                            eprintln!("auth: device code request failed: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+
+                    println!("auth: complete login in your browser");
+                    if let Some(url) = device.verification_uri_complete.as_deref() {
+                        println!("auth: {}", url);
+                    } else {
+                        println!("auth: visit {}", device.verification_uri);
+                        println!("auth: enter code {}", device.user_code);
+                    }
+
+                    let token = match oidc::poll_device_code(&provider, &oidc_cfg, &device) {
+                        Ok(token) => token,
+                        Err(err) => {
+                            eprintln!("auth: device code login failed: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+
+                    let cache_path = match oidc::save_token_cache(&oidc_cfg, &token) {
+                        Ok(path) => path,
+                        Err(err) => {
+                            eprintln!("auth: failed to write token cache: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+
+                    if print_token {
+                        println!("{}", token.access_token);
+                    } else {
+                        println!("auth: token cached at {}", cache_path.display());
+                    }
                 }
                 Some(ClientAuthConfig::Saml { .. }) => {
-                    eprintln!("auth: direct SAML login is not implemented yet in this repo.");
-                    eprintln!(
-                        "For now, use a SAML-to-OIDC broker (or mint a JWT) and set `auth_token`."
-                    );
-                    std::process::exit(1);
+                    let oidc_cfg = match cfg.oidc_device_code_config() {
+                        Ok(Some(cfg)) => cfg,
+                        Ok(None) => {
+                            eprintln!("auth: SAML broker config missing");
+                            std::process::exit(3);
+                        }
+                        Err(err) => {
+                            eprintln!("auth: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+
+                    println!("auth: SAML login uses an OIDC broker device-code flow");
+
+                    let provider = match oidc::discover_provider(&oidc_cfg.issuer) {
+                        Ok(provider) => provider,
+                        Err(err) => {
+                            eprintln!("auth: oidc discovery failed: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+                    let device = match oidc::request_device_code(&provider, &oidc_cfg) {
+                        Ok(device) => device,
+                        Err(err) => {
+                            eprintln!("auth: device code request failed: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+
+                    println!("auth: complete login in your browser");
+                    if let Some(url) = device.verification_uri_complete.as_deref() {
+                        println!("auth: {}", url);
+                    } else {
+                        println!("auth: visit {}", device.verification_uri);
+                        println!("auth: enter code {}", device.user_code);
+                    }
+
+                    let token = match oidc::poll_device_code(&provider, &oidc_cfg, &device) {
+                        Ok(token) => token,
+                        Err(err) => {
+                            eprintln!("auth: device code login failed: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+
+                    let cache_path = match oidc::save_token_cache(&oidc_cfg, &token) {
+                        Ok(path) => path,
+                        Err(err) => {
+                            eprintln!("auth: failed to write token cache: {}", err);
+                            std::process::exit(3);
+                        }
+                    };
+
+                    if print_token {
+                        println!("{}", token.access_token);
+                    } else {
+                        println!("auth: token cached at {}", cache_path.display());
+                    }
                 }
             }
         }
