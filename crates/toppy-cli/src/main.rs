@@ -166,15 +166,24 @@ fn main() {
             }
         }
         Some(Commands::Login { print_token }) => {
+            let audit_ok = |reason: String| {
+                try_audit_event("login", "login", true, Some(reason));
+            };
+            let audit_fail = |reason: String| {
+                try_audit_event("login", "login", false, Some(reason));
+            };
+
             let (cfg, path) = match toppy_core::config::load_config() {
                 Ok((cfg, path)) => (cfg, path),
                 Err(err) => {
                     eprintln!("Failed to load config: {}", err);
+                    audit_fail(format!("config load failed: {}", err));
                     std::process::exit(1);
                 }
             };
             if let Err(err) = cfg.validate() {
                 eprintln!("Config validation failed ({}): {}", path.display(), err);
+                audit_fail(format!("config validation failed: {}", err));
                 std::process::exit(1);
             }
 
@@ -187,20 +196,24 @@ fn main() {
                         Ok(Some(token)) => {
                             if print_token {
                                 println!("{}", token);
+                                audit_ok("mode=token printed=true".to_string());
                             } else {
                                 println!(
                                     "auth: token mode (configured). Use `toppy up` / `toppy doctor`."
                                 );
+                                audit_ok("mode=token printed=false".to_string());
                             }
                         }
                         Ok(None) => {
                             eprintln!(
                                 "auth: token mode requires a token. Set `auth_token = \"...\"` or `[auth] mode = \"token\"` with `token = \"...\"`."
                             );
+                            audit_fail("mode=token missing token".to_string());
                             std::process::exit(2);
                         }
                         Err(err) => {
                             eprintln!("auth: {}", err);
+                            audit_fail(format!("mode=token resolve failed: {}", err));
                             std::process::exit(1);
                         }
                     }
@@ -210,10 +223,12 @@ fn main() {
                         Ok(Some(cfg)) => cfg,
                         Ok(None) => {
                             eprintln!("auth: OIDC config missing");
+                            audit_fail("mode=oidc_device_code config missing".to_string());
                             std::process::exit(3);
                         }
                         Err(err) => {
                             eprintln!("auth: {}", err);
+                            audit_fail(format!("mode=oidc_device_code config error: {}", err));
                             std::process::exit(3);
                         }
                     };
@@ -222,6 +237,7 @@ fn main() {
                         Ok(provider) => provider,
                         Err(err) => {
                             eprintln!("auth: oidc discovery failed: {}", err);
+                            audit_fail(format!("mode=oidc_device_code discovery failed: {}", err));
                             std::process::exit(3);
                         }
                     };
@@ -229,6 +245,10 @@ fn main() {
                         Ok(device) => device,
                         Err(err) => {
                             eprintln!("auth: device code request failed: {}", err);
+                            audit_fail(format!(
+                                "mode=oidc_device_code device_code failed: {}",
+                                err
+                            ));
                             std::process::exit(3);
                         }
                     };
@@ -245,6 +265,7 @@ fn main() {
                         Ok(token) => token,
                         Err(err) => {
                             eprintln!("auth: device code login failed: {}", err);
+                            audit_fail(format!("mode=oidc_device_code poll failed: {}", err));
                             std::process::exit(3);
                         }
                     };
@@ -253,14 +274,26 @@ fn main() {
                         Ok(path) => path,
                         Err(err) => {
                             eprintln!("auth: failed to write token cache: {}", err);
+                            audit_fail(format!(
+                                "mode=oidc_device_code cache write failed: {}",
+                                err
+                            ));
                             std::process::exit(3);
                         }
                     };
 
                     if print_token {
                         println!("{}", token.access_token);
+                        audit_ok(format!(
+                            "mode=oidc_device_code printed=true cache={}",
+                            cache_path.display()
+                        ));
                     } else {
                         println!("auth: token cached at {}", cache_path.display());
+                        audit_ok(format!(
+                            "mode=oidc_device_code printed=false cache={}",
+                            cache_path.display()
+                        ));
                     }
                 }
                 Some(ClientAuthConfig::Saml { .. }) => {
@@ -268,10 +301,12 @@ fn main() {
                         Ok(Some(cfg)) => cfg,
                         Ok(None) => {
                             eprintln!("auth: SAML broker config missing");
+                            audit_fail("mode=saml config missing".to_string());
                             std::process::exit(3);
                         }
                         Err(err) => {
                             eprintln!("auth: {}", err);
+                            audit_fail(format!("mode=saml config error: {}", err));
                             std::process::exit(3);
                         }
                     };
@@ -282,6 +317,7 @@ fn main() {
                         Ok(provider) => provider,
                         Err(err) => {
                             eprintln!("auth: oidc discovery failed: {}", err);
+                            audit_fail(format!("mode=saml discovery failed: {}", err));
                             std::process::exit(3);
                         }
                     };
@@ -289,6 +325,7 @@ fn main() {
                         Ok(device) => device,
                         Err(err) => {
                             eprintln!("auth: device code request failed: {}", err);
+                            audit_fail(format!("mode=saml device_code failed: {}", err));
                             std::process::exit(3);
                         }
                     };
@@ -305,6 +342,7 @@ fn main() {
                         Ok(token) => token,
                         Err(err) => {
                             eprintln!("auth: device code login failed: {}", err);
+                            audit_fail(format!("mode=saml poll failed: {}", err));
                             std::process::exit(3);
                         }
                     };
@@ -313,14 +351,23 @@ fn main() {
                         Ok(path) => path,
                         Err(err) => {
                             eprintln!("auth: failed to write token cache: {}", err);
+                            audit_fail(format!("mode=saml cache write failed: {}", err));
                             std::process::exit(3);
                         }
                     };
 
                     if print_token {
                         println!("{}", token.access_token);
+                        audit_ok(format!(
+                            "mode=saml printed=true cache={}",
+                            cache_path.display()
+                        ));
                     } else {
                         println!("auth: token cached at {}", cache_path.display());
+                        audit_ok(format!(
+                            "mode=saml printed=false cache={}",
+                            cache_path.display()
+                        ));
                     }
                 }
             }
@@ -449,10 +496,22 @@ fn main() {
                 match verify_chain(&path) {
                     Ok(()) => {
                         println!("audit ok: {}", path.display());
+                        try_audit_event(
+                            "audit.verify",
+                            &path.display().to_string(),
+                            true,
+                            Some("ok".to_string()),
+                        );
                         std::process::exit(0);
                     }
                     Err(err) => {
                         eprintln!("audit invalid: {}: {}", path.display(), err);
+                        try_audit_event(
+                            "audit.verify",
+                            &path.display().to_string(),
+                            false,
+                            Some(format!("invalid: {}", err)),
+                        );
                         std::process::exit(1);
                     }
                 }
