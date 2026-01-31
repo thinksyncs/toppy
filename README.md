@@ -1,17 +1,21 @@
 # toppy
 
-This repository contains the source code for **Toppy**, a Rust-based project implementing a MASQUE-compatible gateway and client toolkit.
+Toppy is a Rust workspace for experimenting with a MASQUE-capable gateway and a small client CLI.
+
+Today, it focuses on:
+- A minimal gateway (`toppy-gw`) that supports QUIC ping and HTTP/3 Extended CONNECT for CONNECT-UDP (plus HTTP Datagram echo).
+- A CLI (`toppy-cli`) with environment diagnostics (`doctor`), token acquisition (`login`), and a policy-guarded local TCP forwarder (`up`).
 
 ## Project structure
 
 The project is organized as a Cargo workspace with multiple crates:
 
 - `toppy-cli`: Command-line interface for users to interact with the gateway and manage connections.
-- `toppy-gw`: A lightweight MASQUE gateway implementation built on HTTP/3 for tunneling IP and UDP traffic.
+- `toppy-gw`: A lightweight QUIC + HTTP/3 gateway (QUIC ping + CONNECT-UDP echo for validation).
 - `toppy-core`: Shared functionality, including configuration management, policy enforcement, and logging.
 - `toppy-proto`: Definitions of the custom capsule/command messages used between client and gateway.
 
-This repository is currently a minimal skeleton to get started. Each crate includes a basic Rust program or library that will compile successfully. See `spec.md` for a high-level specification and TODO list.
+See `spec.md` for a usage-oriented spec, and `TODO.md` / `bd` for backlog tracking.
 
 ## Quickstart (5 min)
 
@@ -28,6 +32,11 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
      ca_cert_path = "crates/toppy-gw/testdata/localhost-cert.pem"
      auth_token = "dev-token"
      mtu = 1350
+
+     [policy]
+       [[policy.allow]]
+       cidr = "127.0.0.1/32"
+       ports = [22, 443]
      ```
 
    - JWT auth (optional):
@@ -71,6 +80,13 @@ This repository is currently a minimal skeleton to get started. Each crate inclu
    - `cargo run -p toppy-cli -- doctor --json`
    - Or `make doctor`
 
+## What the CLI does
+
+- `toppy doctor` loads config and runs checks like DNS resolution, QUIC ping (with TLS verification + token validation), CONNECT-UDP handshake, CONNECT-UDP datagram echo, TUN permission probe, MTU sanity, and optional policy evaluation.
+- `toppy login` performs token acquisition for OIDC device-code mode (and SAML-via-broker mode) and caches a token locally.
+- `toppy up` is a local TCP forwarder guarded by the configured policy (it is not a MASQUE tunnel yet). It also applies a per-connection token-bucket rate limit.
+- `toppy audit verify` verifies the local tamper-evident JSONL audit log hash chain.
+
 ## Dev setup
 
 If you don't have Rust installed yet, run:
@@ -85,6 +101,11 @@ Manual install (recommended):
 After that, local quality gates:
 
 - `make fmt clippy test`
+
+## Config path override
+
+- Default config path: `~/.config/toppy/config.toml`
+- Override: set `TOPPY_CONFIG=/path/to/config.toml`
 
 ## Windows Wintun (TUN)
 

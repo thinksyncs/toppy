@@ -1,28 +1,125 @@
-Toppy OSS仕様書
+Toppy OSS仕様書（usage-oriented）
 
-1. ソフトウェア仕様書
+この文書は「いま実際に動くもの」を基準に、Toppy の仕様と使い方をまとめます。
+将来の構想は TODO / bd issue に切り出し、ここでは非目標として明示します。
 
-本ツールは Rust 製の CLI ベース接続ツールであり、HTTP/3 MASQUE（主に RFC 9484 CONNECT‑IP）を用いてリモートネットワークへの安全なアクセスを提供します。目的は技術者が自宅や検証環境・顧客環境へアクセスする際の鍵管理・経路確立・監査の面倒を吸収し、最小権限・短寿命クレデンシャル・ポリシー管理を実現することです。主要な仕様を以下にまとめます。
-	•	対象ユーザ：SRE、セキュリティ担当者、開発者など。Linux/Windows/macOS から検証機や自宅 PC へ安全にアクセスしたい技術者を想定します。
-	•	主要機能
-	•	toppy login：OIDC デバイスコードフロー等で認証・認可を行い、短寿命トークンを取得します。完全 CLI で実行可能で、必要に応じブラウザを開くだけに留めます。
-	•	toppy up/down：HTTP/3 MASQUE（CONNECT‑IP）を用いてトンネルを確立し、TUN インタフェースを作成して指定 CIDR・ポートへのルーティングを設定します。セッションは短寿命で、自動失効します。
-	•	toppy ssh <target>：ポリシーで許可されたターゲットへ接続する際に短寿命 SSH 証明書を取得し、OpenSSH クライアントに渡します。長期鍵を配布しません。
-	•	toppy rdp <target>：Windows ターゲットへ接続する場合、ローカルポートフォワード（例：localhost:<ランダムポート>→ターゲット 3389）を作成した後、OS 標準の RDP クライアントを起動します。
-	•	toppy pf <target> --local <port> --remote <port>：任意 TCP ポートのフォワードを安全に行います。許可されたポートに限定されます。
-	•	toppy target add/list：YAML/JSON でターゲットを宣言的に管理し、CIDR/ポート単位の許可ポリシーを定義します。デフォルトは deny です。
-	•	toppy audit tail：誰がいつどこへ接続したかなどの監査ログを確認できます。ログはローカルおよびゲートウェイ側に記録されます。
-	•	toppy doctor：環境診断コマンド。設定の妥当性、DNS 解決、HTTP/3 接続、認証トークン期限、TUN 権限、MTU 推定、ポリシー適用等をチェックし、成功・警告・失敗を JSON および人間向け出力で返します。
-	•	安全設計
-	•	短寿命セッション：トークンや証明書は通常 5〜30 分で失効し、漏洩時の被害範囲を限定します。
-	•	最小権限ポリシー：ターゲットごとに許可された CIDR/ポートを厳格に定義し、それ以外は拒否します。通信量のレート制御フックも用意します。
-	•	監査：接続開始・終了、許可・拒否の理由、宛先、転送量などを機械可読 JSONL 形式で保存し、必要に応じ改ざん耐性のあるストレージへ送信できるよう設計します。
-	•	再現可能な導入：docker compose によりゲートウェイ・テスト環境を簡単に起動でき、README に 5 分以内のクイックスタートを記載します。
-	•	非目標
-	•	初期リリースでは完全な L3 VPN（ネットワーク丸ごとの透過共有）を目指さず、アプリケーション／ポート単位の安全な接続に集中します。
-	•	OIDC 以外の IdP（例: 直接 SAML）への対応は後段で検討します（当面は SAML→OIDC ブローカー等を推奨）。
-	•	CONNECT‑UDP や他トランスポートへの対応は Phase 3 以降で追加します。
+## 1. 概要
 
-2. TODO / ゲート
+Toppy は Rust 製の CLI + ゲートウェイのワークスペースです。
 
-TODO と進捗、ゲートの定義は `TODO.md` を参照してください。
+現状のスコープ:
+- ゲートウェイ（`toppy-gw`）: QUIC ping と、HTTP/3 Extended CONNECT による CONNECT-UDP 受理 + HTTP Datagrams echo（疎通確認用）。
+- CLI（`toppy-cli`）: 設定/環境診断（`doctor`）、トークン取得・キャッシュ（`login`）、ポリシーでガードされたローカル TCP フォワーダ（`up`）、監査ログ検証（`audit verify`）。
+
+対象ユーザ:
+- SRE / セキュリティ担当 / 開発者（Linux / macOS / Windows）
+
+## 2. CLI仕様
+
+### 2.1 コマンド一覧
+
+- `toppy doctor [--json]`
+  - 設定と環境の診断結果を出力します（JSON または人間向け）。
+- `toppy login [--print-token]`
+  - 認証トークンを取得し、必要に応じてローカルにキャッシュします。
+- `toppy up --target <ip:port> --listen <ip:port> [--once]`
+  - ローカルで TCP を待ち受け、指定ターゲットへ転送します。
+  - 注意: 現時点の `up` は MASQUE トンネルではなく、ローカル TCP フォワードです。
+- `toppy audit verify [--path <file>]`
+  - ローカル監査ログ（ハッシュチェーン JSONL）の整合性を検証します。
+
+## 3. 設定仕様（config.toml）
+
+デフォルトパス:
+- `~/.config/toppy/config.toml`
+
+上書き:
+- `TOPPY_CONFIG=/path/to/config.toml`
+
+主要キー:
+- `gateway` / `port` : doctor のネットワーク検証対象
+- `server_name` : TLS SNI
+- `ca_cert_path` : TLS ルート CA PEM（doctor が使用）
+- `mtu` : doctor が sanity チェック
+- `audit_log_path` : 監査ログ出力先（未指定はデフォルト）
+
+### 3.1 認証（クライアント側）
+
+認証は `[auth]` セクションで選択できます（未指定の場合は従来互換の `auth_token` を利用）。
+
+- Token（静的トークン/JWT）:
+  - `auth_token = "..."` または `[auth] mode = "token"` + `token = "..."`
+- OIDC device-code:
+  - `[auth] mode = "oidc_device_code"` を指定し、`toppy login` でトークンを取得してキャッシュします。
+- SAML（直接統合ではなく broker 経由）:
+  - `[auth] mode = "saml"` を指定し、内部的には broker の OIDC device-code を利用します。
+
+### 3.2 ポリシー（ローカル forwarder 向け）
+
+`toppy up` はポリシー評価により許可/拒否します。
+設定が無い場合は allow ルールが空になるため、すべて deny になります。
+
+例:
+
+```toml
+[policy]
+  [[policy.allow]]
+  cidr = "127.0.0.1/32"
+  ports = [22, 443]
+```
+
+### 3.3 レート制限（toppy up）
+
+`toppy up` の TCP 転送は 1 コネクションあたり token-bucket を適用します。
+
+```toml
+[rate]
+bytes_per_sec = 10485760
+burst_bytes = 10485760
+```
+
+無効化:
+
+```toml
+[rate]
+bytes_per_sec = 0
+burst_bytes = 0
+```
+
+## 4. doctor のチェック仕様
+
+主なチェック ID:
+- `cfg.load`
+- `net.dns`
+- `h3.connect`（QUIC ping + TLS/トークン検証）
+- `masque.connect_udp`（CONNECT-UDP handshake）
+- `masque.connect_udp.datagram`（HTTP Datagram echo）
+- `tun.perm`
+- `mtu.sanity`
+- `policy.denied`（`TOPPY_DOCTOR_TARGET` 指定時）
+
+テスト/CI 向けの強制フラグ（環境変数）:
+- `TOPPY_DOCTOR_NET=pass|fail|skip`
+- `TOPPY_DOCTOR_TUN=pass|fail|skip`
+- `TOPPY_DOCTOR_TARGET=ip:port`
+
+## 5. ゲートウェイ仕様（toppy-gw）
+
+- `/healthz` : HTTP 200 JSON
+- QUIC:
+  - 非 H3: `ping` を受け取ると `pong` を返す（トークンが必要なモードあり）
+  - H3: Extended CONNECT + CONNECT-UDP を受理し、Datagram echo を提供する
+
+認証（ゲートウェイ側、環境変数）:
+- `TOPPY_GW_TOKEN`（共有トークン）または `TOPPY_GW_JWT_SECRET`（HS256）
+
+## 6. 非目標（現時点）
+
+- 完全な L3 VPN / TUN ルーティングの自動設定
+- CONNECT-IP の本格実装
+- 「任意 UDP 宛先へ透過プロキシ」するユーザ向け CONNECT-UDP プロキシ（doctor の echo 以上）
+- 直接 SAML 統合（当面は SAML→OIDC broker を推奨）
+
+## 7. TODO / ゲート
+
+TODO と進捗、ゲートの定義は `TODO.md`（および `bd`）を参照してください。
