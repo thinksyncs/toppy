@@ -1522,10 +1522,19 @@ dependencies = [
 name = "toppy-cli"
 version = "0.0.1"
 dependencies = [
+ "bytes",
  "clap",
+ "h3",
+ "h3-datagram",
+ "h3-quinn",
+ "http",
+ "quinn",
+ "rustls",
  "serde",
  "serde_json",
+ "tokio",
  "toppy-core",
+ "toppy-proto",
 ]
 
 [[package]]
@@ -1566,6 +1575,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "toppy-core",
+ "toppy-proto",
 ]
 
 [[package]]

@@ -6,6 +6,16 @@ license = "MIT"
 
 [dependencies]
 toppy-core = { path = "../toppy-core" }
+toppy-proto = { path = "../toppy-proto" }
+
+bytes = "1"
+h3 = "0.0.8"
+h3-quinn = { version = "0.0.10", features = ["datagram"] }
+h3-datagram = "0.0.2"
+http = "1.1"
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util", "net"] }
 
 clap = { version = "4.4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }

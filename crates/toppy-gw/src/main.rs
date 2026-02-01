@@ -15,6 +15,7 @@ use bytes::Bytes;
 use h3::ext::Protocol;
 use h3_datagram::datagram_handler::HandleDatagramsExt;
 use http::StatusCode as HttpStatusCode;
+use toppy_proto::masque::{HttpDatagram, CONNECT_UDP_CONTEXT_ID};
 
 fn main() {
     let http_listen = env::var("TOPPY_GW_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
@@ -257,6 +258,27 @@ async fn handle_h3_connection(
             continue;
         }
 
+        let mode = ConnectUdpMode::from_uri(req.uri());
+        let target = match &mode {
+            ConnectUdpMode::Echo => None,
+            ConnectUdpMode::Forward => match parse_connect_udp_target(req.uri()).await {
+                Ok(addr) => Some(addr),
+                Err(err) => {
+                    let res = http::Response::builder()
+                        .status(HttpStatusCode::BAD_REQUEST)
+                        .body(())
+                        .map_err(|e| format!("h3 response build failed: {e}"))?;
+                    stream
+                        .send_response(res)
+                        .await
+                        .map_err(|e| format!("h3 send response failed: {e:?}"))?;
+                    let _ = stream.finish().await;
+                    eprintln!("connect-udp bad request: {err}");
+                    continue;
+                }
+            },
+        };
+
         // Minimal CONNECT-UDP handshake: accept the request.
         let res = http::Response::builder()
             .status(HttpStatusCode::OK)
@@ -267,11 +289,23 @@ async fn handle_h3_connection(
             .await
             .map_err(|e| format!("h3 send response failed: {e:?}"))?;
 
-        // Datagram echo for this CONNECT-UDP stream: any datagram associated with this
-        // request stream is echoed back verbatim.
+        let udp = if let Some(target) = target {
+            let udp = tokio::net::UdpSocket::bind("0.0.0.0:0")
+                .await
+                .map_err(|e| format!("udp bind failed: {e}"))?;
+            udp.connect(target)
+                .await
+                .map_err(|e| format!("udp connect failed: {e}"))?;
+            Some(udp)
+        } else {
+            None
+        };
+
+        // Echo or relay datagrams for this CONNECT-UDP stream.
         let stream_id = stream.id();
         let mut dg_sender = h3_conn.get_datagram_sender(stream_id);
         let mut dg_reader = h3_conn.get_datagram_reader();
+        let mut buf = vec![0u8; 2048];
 
         loop {
             tokio::select! {
@@ -281,8 +315,42 @@ async fn handle_h3_connection(
                         continue;
                     }
                     let payload = dg.into_payload();
+                    match &mode {
+                        ConnectUdpMode::Echo => {
+                            dg_sender
+                                .send_datagram(payload)
+                                .map_err(|e| format!("h3 send datagram failed: {e}"))?;
+                        }
+                        ConnectUdpMode::Forward => {
+                            let decoded = HttpDatagram::decode(payload.as_ref())
+                                .map_err(|_| "invalid http datagram".to_string())?;
+                            if decoded.context_id != CONNECT_UDP_CONTEXT_ID {
+                                continue;
+                            }
+                            if let Some(udp) = udp.as_ref() {
+                                udp
+                                    .send(decoded.payload.as_slice())
+                                    .await
+                                    .map_err(|e| format!("udp send failed: {e}"))?;
+                            }
+                        }
+                    }
+                }
+                n = async {
+                    match udp.as_ref() {
+                        Some(udp) => udp.recv(&mut buf).await.map(Some),
+                        None => {
+                            std::future::pending::<Result<Option<usize>, std::io::Error>>().await
+                        }
+                    }
+                } => {
+                    let n = n.map_err(|e| format!("udp recv failed: {e}"))?;
+                    let Some(n) = n else { continue; };
+                    let dg = HttpDatagram::new(CONNECT_UDP_CONTEXT_ID, &buf[..n])
+                        .encode()
+                        .map_err(|_| "encode http datagram failed".to_string())?;
                     dg_sender
-                        .send_datagram(payload)
+                        .send_datagram(Bytes::from(dg))
                         .map_err(|e| format!("h3 send datagram failed: {e}"))?;
                 }
                 chunk = stream.recv_data() => {
@@ -299,6 +367,59 @@ async fn handle_h3_connection(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectUdpMode {
+    /// Legacy behavior used by `doctor`: datagram echo.
+    Echo,
+    /// UDP forwarding to the target encoded in the URI.
+    Forward,
+}
+
+impl ConnectUdpMode {
+    fn from_uri(uri: &http::Uri) -> Self {
+        if uri.path().starts_with("/.well-known/masque/udp-forward/") {
+            Self::Forward
+        } else {
+            // Keep `/.well-known/masque/udp/...` as echo for backwards compatibility.
+            Self::Echo
+        }
+    }
+}
+
+async fn parse_connect_udp_target(uri: &http::Uri) -> Result<SocketAddr, String> {
+    let path = uri.path();
+    if !path.starts_with("/.well-known/masque/udp-forward/") {
+        return Err("connect-udp forwarding requires /.well-known/masque/udp-forward/".to_string());
+    }
+    let mut segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() < 2 {
+        return Err("connect-udp path too short".to_string());
+    }
+
+    // Expect the last two segments to be <host>/<port>.
+    let port_str = segments
+        .pop()
+        .ok_or_else(|| "missing connect-udp port".to_string())?;
+    let host = segments
+        .pop()
+        .ok_or_else(|| "missing connect-udp host".to_string())?;
+    let port: u16 = port_str
+        .parse()
+        .map_err(|_| format!("invalid connect-udp port: {port_str}"))?;
+
+    // Try ip:port fast-path.
+    if let Ok(addr) = format!("{host}:{port}").parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+
+    let mut addrs = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| format!("dns lookup failed for {host}:{port}: {e}"))?;
+    addrs
+        .next()
+        .ok_or_else(|| format!("dns lookup returned no addresses for {host}:{port}"))
 }
 
 fn load_cert_chain(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {

@@ -8,8 +8,8 @@ Toppy OSS仕様書（usage-oriented）
 Toppy は Rust 製の CLI + ゲートウェイのワークスペースです。
 
 現状のスコープ:
-- ゲートウェイ（`toppy-gw`）: QUIC ping と、HTTP/3 Extended CONNECT による CONNECT-UDP 受理 + HTTP Datagrams echo（疎通確認用）。
-- CLI（`toppy-cli`）: 設定/環境診断（`doctor`）、トークン取得・キャッシュ（`login`）、ポリシーでガードされたローカル TCP フォワーダ（`up`）、監査ログ検証（`audit verify`）。
+- ゲートウェイ（`toppy-gw`）: QUIC ping と、HTTP/3 Extended CONNECT による CONNECT-UDP（疎通確認用 echo / UDP forwarding）。
+- CLI（`toppy-cli`）: 設定/環境診断（`doctor`）、トークン取得・キャッシュ（`login`）、ポリシーでガードされたローカル forwarder（`up`=TCP / `udp`=UDP）、監査ログ検証（`audit verify`）。
 
 対象ユーザ:
 - SRE / セキュリティ担当 / 開発者（Linux / macOS / Windows）
@@ -25,6 +25,9 @@ Toppy は Rust 製の CLI + ゲートウェイのワークスペースです。
 - `toppy up --target <ip:port> --listen <ip:port> [--once]`
   - ローカルで TCP を待ち受け、指定ターゲットへ転送します。
   - 注意: 現時点の `up` は MASQUE トンネルではなく、ローカル TCP フォワードです。
+- `toppy udp --target <ip:port> --listen <ip:port>`
+  - ローカルで UDP を待ち受け、指定ターゲットへ CONNECT-UDP（HTTP/3 Extended CONNECT + HTTP Datagrams）で転送します。
+  - `up` と同様、既存の `[policy]` allow ルールで許可/拒否します。
 - `toppy audit verify [--path <file>]`
   - ローカル監査ログ（ハッシュチェーン JSONL）の整合性を検証します。
 
@@ -56,7 +59,7 @@ Toppy は Rust 製の CLI + ゲートウェイのワークスペースです。
 
 ### 3.2 ポリシー（ローカル forwarder 向け）
 
-`toppy up` はポリシー評価により許可/拒否します。
+`toppy up` / `toppy udp` はポリシー評価により許可/拒否します。
 設定が無い場合は allow ルールが空になるため、すべて deny になります。
 
 例:
@@ -108,7 +111,9 @@ burst_bytes = 0
 - `/healthz` : HTTP 200 JSON
 - QUIC:
   - 非 H3: `ping` を受け取ると `pong` を返す（トークンが必要なモードあり）
-  - H3: Extended CONNECT + CONNECT-UDP を受理し、Datagram echo を提供する
+  - H3: Extended CONNECT + CONNECT-UDP を受理する
+    - `/.well-known/masque/udp/<host>/<port>/` : Datagram echo（doctor 用の疎通確認）
+    - `/.well-known/masque/udp-forward/<host>/<port>/` : UDP forwarding（任意 UDP 宛先）
 
 認証（ゲートウェイ側、環境変数）:
 - `TOPPY_GW_TOKEN`（共有トークン）または `TOPPY_GW_JWT_SECRET`（HS256）
@@ -117,7 +122,7 @@ burst_bytes = 0
 
 - 完全な L3 VPN / TUN ルーティングの自動設定
 - CONNECT-IP の本格実装
-- 「任意 UDP 宛先へ透過プロキシ」するユーザ向け CONNECT-UDP プロキシ（doctor の echo 以上）
+- CONNECT-UDP の高度な機能（複数クライアントのマッピング、NAT 的振る舞い、QoS など）
 - 直接 SAML 統合（当面は SAML→OIDC broker を推奨）
 
 ## 7. TODO / ゲート

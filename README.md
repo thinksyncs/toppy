@@ -3,15 +3,15 @@
 Toppy is a Rust workspace for experimenting with a MASQUE-capable gateway and a small client CLI.
 
 Today, it focuses on:
-- A minimal gateway (`toppy-gw`) that supports QUIC ping and HTTP/3 Extended CONNECT for CONNECT-UDP (plus HTTP Datagram echo).
-- A CLI (`toppy-cli`) with environment diagnostics (`doctor`), token acquisition (`login`), and a policy-guarded local TCP forwarder (`up`).
+- A minimal gateway (`toppy-gw`) that supports QUIC ping and HTTP/3 Extended CONNECT for CONNECT-UDP (doctor echo + UDP forwarding).
+- A CLI (`toppy-cli`) with environment diagnostics (`doctor`), token acquisition (`login`), and policy-guarded local forwarders (`up` for TCP, `udp` for UDP).
 
 ## Project structure
 
 The project is organized as a Cargo workspace with multiple crates:
 
 - `toppy-cli`: Command-line interface for users to interact with the gateway and manage connections.
-- `toppy-gw`: A lightweight QUIC + HTTP/3 gateway (QUIC ping + CONNECT-UDP echo for validation).
+- `toppy-gw`: A lightweight QUIC + HTTP/3 gateway (QUIC ping + CONNECT-UDP echo/forward).
 - `toppy-core`: Shared functionality, including configuration management, policy enforcement, and logging.
 - `toppy-proto`: Definitions of the custom capsule/command messages used between client and gateway.
 
@@ -85,6 +85,7 @@ See `spec.md` for a usage-oriented spec, and `TODO.md` / `bd` for backlog tracki
 - `toppy doctor` loads config and runs checks like DNS resolution, QUIC ping (with TLS verification + token validation), CONNECT-UDP handshake, CONNECT-UDP datagram echo, TUN permission probe, MTU sanity, and optional policy evaluation.
 - `toppy login` performs token acquisition for OIDC device-code mode (and SAML-via-broker mode) and caches a token locally.
 - `toppy up` is a local TCP forwarder guarded by the configured policy (it is not a MASQUE tunnel yet). It also applies a per-connection token-bucket rate limit.
+- `toppy udp` is a local UDP proxy guarded by the configured policy. It forwards UDP payloads over CONNECT-UDP (HTTP/3 Extended CONNECT + HTTP Datagrams).
 - `toppy audit verify` verifies the local tamper-evident JSONL audit log hash chain.
 
 ## Dev setup
@@ -158,7 +159,7 @@ In the JSON output, verify these checks are `pass`:
 
 - Short-lived credentials and default-deny policies to limit blast radius.
 - Audit logs for connection activity are recorded locally as tamper-evident JSONL.
-- Out of scope for MVP: full L3 VPN, direct SAML integration, full CONNECT-UDP proxying to arbitrary UDP targets.
+- Out of scope for MVP: full L3 VPN, direct SAML integration, advanced UDP proxy features (multi-peer mapping, NAT behaviors, QoS).
 
 ## Audit logs
 

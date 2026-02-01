@@ -1,13 +1,24 @@
 use clap::{Parser, Subcommand};
 use std::io;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::thread;
+use std::time::Duration;
 use toppy_core::audit::{
     append_event, default_audit_log_path, now_unix_ms, verify_chain, AuditEvent,
 };
 use toppy_core::config::{ClientAuthConfig, SessionRateLimit};
 use toppy_core::oidc;
 use toppy_core::policy::{Decision, Policy, Target};
+
+use bytes::Bytes;
+use h3::ext::Protocol;
+use h3_datagram::datagram_handler::HandleDatagramsExt;
+use quinn::crypto::rustls::QuicClientConfig;
+use quinn::{ClientConfig, Endpoint};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::CertificateDer;
+use rustls::RootCertStore;
+use toppy_proto::masque::{HttpDatagram, CONNECT_UDP_CONTEXT_ID};
 
 mod rate_copy;
 
@@ -45,6 +56,16 @@ enum Commands {
         /// Exit after a single connection
         #[arg(long)]
         once: bool,
+    },
+
+    /// Start a local UDP proxy to an allowed target over CONNECT-UDP
+    Udp {
+        /// Target to connect to (ip:port)
+        #[arg(long)]
+        target: String,
+        /// Local UDP listen address (ip:port)
+        #[arg(long)]
+        listen: String,
     },
 
     /// Audit log utilities
@@ -106,6 +127,24 @@ fn parse_socket_addr(label: &str, value: &str) -> Result<SocketAddr, String> {
     value
         .parse::<SocketAddr>()
         .map_err(|e| format!("invalid {} {}: {}", label, value, e))
+}
+
+fn load_ca_certs_pem(path: &std::path::Path) -> Result<RootCertStore, String> {
+    let data = std::fs::read(path)
+        .map_err(|e| format!("failed to read ca_cert_path {}: {}", path.display(), e))?;
+    let certs = CertificateDer::pem_slice_iter(&data)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("failed to parse CA certs from {}: {}", path.display(), e))?;
+    if certs.is_empty() {
+        return Err(format!("no CA certificates found in {}", path.display()));
+    }
+    let mut store = RootCertStore::empty();
+    for cert in certs {
+        store
+            .add(cert)
+            .map_err(|e| format!("failed to add CA cert {}: {}", path.display(), e))?;
+    }
+    Ok(store)
 }
 
 fn proxy_connection(
@@ -485,6 +524,284 @@ fn main() {
                         }
                     }
                 }
+            }
+        }
+        Some(Commands::Udp { target, listen }) => {
+            let target_for_audit = target.clone();
+            let target_for_err = target.clone();
+            let (cfg, path) = match toppy_core::config::load_config() {
+                Ok((cfg, path)) => (cfg, path),
+                Err(err) => {
+                    eprintln!("Failed to load config: {}", err);
+                    try_audit_event(
+                        "udp",
+                        &target,
+                        false,
+                        Some("config load failed".to_string()),
+                    );
+                    std::process::exit(1);
+                }
+            };
+            if let Err(err) = cfg.validate() {
+                eprintln!("Config validation failed ({}): {}", path.display(), err);
+                try_audit_event(
+                    "udp",
+                    &target,
+                    false,
+                    Some(format!("config validation failed: {}", err)),
+                );
+                std::process::exit(1);
+            }
+
+            let target_addr = match parse_socket_addr("target", &target) {
+                Ok(addr) => addr,
+                Err(err) => {
+                    eprintln!("{}", err);
+                    std::process::exit(1);
+                }
+            };
+            let listen_addr = match parse_socket_addr("listen", &listen) {
+                Ok(addr) => addr,
+                Err(err) => {
+                    eprintln!("{}", err);
+                    std::process::exit(1);
+                }
+            };
+
+            let policy = match cfg.policy.as_ref() {
+                Some(policy_cfg) => match Policy::from_config(policy_cfg) {
+                    Ok(policy) => policy,
+                    Err(err) => {
+                        eprintln!("Policy config invalid: {}", err);
+                        std::process::exit(1);
+                    }
+                },
+                None => Policy { allow: Vec::new() },
+            };
+            let target_policy = Target {
+                ip: target_addr.ip(),
+                port: target_addr.port(),
+            };
+            match policy.evaluate(&target_policy) {
+                Decision::Allow => {}
+                Decision::Deny { reason } => {
+                    eprintln!("Policy denied: {}", reason);
+                    try_audit_event("udp", &target, false, Some(reason));
+                    std::process::exit(2);
+                }
+            }
+
+            let host = cfg
+                .gateway
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    eprintln!("Missing config: gateway");
+                    std::process::exit(1);
+                });
+            let port = cfg.port.unwrap_or_else(|| {
+                eprintln!("Missing config: port");
+                std::process::exit(1);
+            });
+            let server_name = cfg
+                .server_name
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    eprintln!("Missing config: server_name");
+                    std::process::exit(1);
+                });
+            let ca_cert_path = cfg
+                .ca_cert_path
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    eprintln!("Missing config: ca_cert_path");
+                    std::process::exit(1);
+                });
+            let auth_token = match cfg.resolve_auth_token() {
+                Ok(Some(t)) => t,
+                Ok(None) => {
+                    eprintln!("Missing auth token (auth_token/auth config)");
+                    std::process::exit(1);
+                }
+                Err(err) => {
+                    eprintln!("Failed to resolve auth token: {}", err);
+                    std::process::exit(1);
+                }
+            };
+
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap_or_else(|e| {
+                    eprintln!("failed to start tokio runtime: {}", e);
+                    std::process::exit(1);
+                });
+
+            let run = rt.block_on(async move {
+                let addr = format!("{}:{}", host, port);
+                let addr = addr
+                    .to_socket_addrs()
+                    .map_err(|e| format!("resolve {} failed: {}", addr, e))?
+                    .next()
+                    .ok_or_else(|| format!("resolve {} returned no addresses", addr))?;
+
+                let ca_store = load_ca_certs_pem(std::path::Path::new(ca_cert_path))?;
+                let mut crypto = rustls::ClientConfig::builder()
+                    .with_root_certificates(ca_store)
+                    .with_no_client_auth();
+                crypto.alpn_protocols = vec![b"h3".to_vec()];
+                let crypto = QuicClientConfig::try_from(crypto)
+                    .map_err(|e| format!("quic client config failed: {}", e))?;
+
+                let mut client_config = ClientConfig::new(std::sync::Arc::new(crypto));
+                client_config
+                    .transport_config(std::sync::Arc::new(quinn::TransportConfig::default()));
+
+                let bind_addr = "0.0.0.0:0"
+                    .parse::<SocketAddr>()
+                    .map_err(|e| e.to_string())?;
+                let mut endpoint = Endpoint::client(bind_addr)
+                    .map_err(|e| format!("quic client setup failed: {}", e))?;
+                endpoint.set_default_client_config(client_config);
+
+                let connecting = endpoint
+                    .connect(addr, server_name)
+                    .map_err(|e| format!("quic connect setup failed: {}", e))?;
+                let connection = tokio::time::timeout(Duration::from_millis(1500), connecting)
+                    .await
+                    .map_err(|_| "quic connect timed out".to_string())?
+                    .map_err(|e| format!("quic connect failed: {}", e))?;
+
+                let is_h3 = connection
+                    .handshake_data()
+                    .and_then(|any| any.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+                    .and_then(|hs| hs.protocol)
+                    .as_deref()
+                    == Some(b"h3");
+                if !is_h3 {
+                    connection.close(0u32.into(), b"no-h3");
+                    endpoint.wait_idle().await;
+                    return Err("gateway did not negotiate ALPN h3".to_string());
+                }
+
+                let quinn_conn = h3_quinn::Connection::new(connection);
+                let (mut h3_conn, mut sender) = h3::client::builder()
+                    .enable_extended_connect(true)
+                    .enable_datagram(true)
+                    .build::<_, _, Bytes>(quinn_conn)
+                    .await
+                    .map_err(|e| format!("h3 client init failed: {e:?}"))?;
+
+                let uri: http::Uri = format!(
+                    "https://{}/.well-known/masque/udp-forward/{}/{}/",
+                    host,
+                    target_addr.ip(),
+                    target_addr.port()
+                )
+                .parse()
+                .map_err(|e| format!("invalid uri: {e}"))?;
+
+                let mut req = http::Request::builder()
+                    .method(http::Method::CONNECT)
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {}", auth_token))
+                    .body(())
+                    .map_err(|e| format!("request build failed: {e}"))?;
+                req.extensions_mut().insert(Protocol::CONNECT_UDP);
+
+                let mut stream =
+                    tokio::time::timeout(Duration::from_millis(1500), sender.send_request(req))
+                        .await
+                        .map_err(|_| "h3 send_request timed out".to_string())?
+                        .map_err(|e| format!("h3 send_request failed: {e:?}"))?;
+
+                let resp =
+                    tokio::time::timeout(Duration::from_millis(1500), stream.recv_response())
+                        .await
+                        .map_err(|_| "h3 recv_response timed out".to_string())?
+                        .map_err(|e| format!("h3 recv_response failed: {e:?}"))?;
+                if resp.status() != http::StatusCode::OK {
+                    let _ = stream.finish().await;
+                    let _ = h3_conn.shutdown(0).await;
+                    let _ = h3_conn.wait_idle().await;
+                    endpoint.wait_idle().await;
+                    return Err(format!("connect-udp unexpected status: {}", resp.status()));
+                }
+
+                let udp = tokio::net::UdpSocket::bind(listen_addr)
+                    .await
+                    .map_err(|e| format!("udp bind {} failed: {}", listen_addr, e))?;
+                let local_addr = udp
+                    .local_addr()
+                    .map_err(|e| format!("failed to read local addr: {}", e))?;
+                println!("toppy udp listening on {} -> {}", local_addr, target_addr);
+                try_audit_event(
+                    "udp",
+                    &target_for_audit,
+                    true,
+                    Some(format!("listening={}", local_addr)),
+                );
+
+                let stream_id = stream.id();
+                let mut dg_sender = h3_conn.get_datagram_sender(stream_id);
+                let mut dg_reader = h3_conn.get_datagram_reader();
+                let mut buf = vec![0u8; 2048];
+                let mut last_peer: Option<SocketAddr> = None;
+
+                loop {
+                    tokio::select! {
+                        recv = udp.recv_from(&mut buf) => {
+                            let (n, peer) = recv.map_err(|e| format!("udp recv failed: {}", e))?;
+                            last_peer = Some(peer);
+                            let dg = HttpDatagram::new(CONNECT_UDP_CONTEXT_ID, &buf[..n])
+                                .encode()
+                                .map_err(|_| "encode http datagram failed".to_string())?;
+                            dg_sender
+                                .send_datagram(Bytes::from(dg))
+                                .map_err(|e| format!("h3 send datagram failed: {e}"))?;
+                        }
+                        dg = dg_reader.read_datagram() => {
+                            let dg = dg.map_err(|e| format!("h3 recv datagram failed: {e:?}"))?;
+                            if dg.stream_id() != stream_id {
+                                continue;
+                            }
+                            let payload = dg.into_payload();
+                            let decoded = HttpDatagram::decode(payload.as_ref())
+                                .map_err(|_| "invalid http datagram".to_string())?;
+                            if decoded.context_id != CONNECT_UDP_CONTEXT_ID {
+                                continue;
+                            }
+                            if let Some(peer) = last_peer {
+                                let _ = udp.send_to(decoded.payload.as_slice(), peer).await;
+                            }
+                        }
+                        chunk = stream.recv_data() => {
+                            match chunk.map_err(|e| format!("h3 recv data failed: {e:?}"))? {
+                                Some(_chunk) => {
+                                    // CONNECT-UDP payload is carried in HTTP Datagrams, not stream data.
+                                }
+                                None => break,
+                            }
+                        }
+                    }
+                }
+
+                let _ = stream.finish().await;
+                let _ = h3_conn.shutdown(0).await;
+                let _ = h3_conn.wait_idle().await;
+                endpoint.wait_idle().await;
+                Ok::<(), String>(())
+            });
+
+            if let Err(err) = run {
+                eprintln!("udp proxy failed: {}", err);
+                try_audit_event("udp", &target_for_err, false, Some(err));
+                std::process::exit(1);
             }
         }
         Some(Commands::Audit { command }) => match command {

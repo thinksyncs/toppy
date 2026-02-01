@@ -6,6 +6,7 @@ license = "MIT"
 
 [dependencies]
 toppy-core = { path = "../toppy-core" }
+toppy-proto = { path = "../toppy-proto" }
 tiny_http = "0.12"
 quinn = "0.11"
 h3 = "0.0.8"
@@ -15,4 +16,4 @@ bytes = "1"
 h3-datagram = "0.0.2"
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net"] }

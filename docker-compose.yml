@@ -17,3 +17,18 @@ services:
       interval: 5s
       timeout: 2s
       retries: 5
+
+  udp-echo:
+    image: python:3.12-alpine
+    command:
+      - python
+      - -u
+      - -c
+      - |
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.bind(("0.0.0.0", 9999))
+        print("udp-echo listening on 0.0.0.0:9999", flush=True)
+        while True:
+            data, addr = s.recvfrom(65535)
+            s.sendto(data, addr)
