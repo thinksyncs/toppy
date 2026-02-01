@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <mxCell id="lane_local" value="Local machine" style="swimlane;horizontal=0;startSize=30;rounded=0;container=1;collapsible=0;childLayout=stackLayout;" parent="1" vertex="1">
+      <mxGeometry x="20" y="20" width="1060" height="250" as="geometry" />
+    </mxCell>
+    <mxCell id="lane_docker" value="Docker network (dev)" style="swimlane;horizontal=0;startSize=30;rounded=0;container=1;collapsible=0;childLayout=stackLayout;" parent="1" vertex="1">
+      <mxGeometry x="20" y="290" width="1060" height="250" as="geometry" />
+    </mxCell>
+    <mxCell id="lane_target" value="Target network" style="swimlane;horizontal=0;startSize=30;rounded=0;container=1;collapsible=0;childLayout=stackLayout;" parent="1" vertex="1">
+      <mxGeometry x="20" y="560" width="1060" height="240" as="geometry" />
+    </mxCell>
+
+    <mxCell id="local_app" value="UDP App (client)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="lane_local" vertex="1">
+      <mxGeometry x="40" y="70" width="170" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="local_udpsock" value="Local UDP socket (e.g., 127.0.0.1:19000)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" parent="lane_local" vertex="1">
+      <mxGeometry x="240" y="70" width="240" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="local_cli" value="toppy-cli (doctor / udp / up)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="lane_local" vertex="1">
+      <mxGeometry x="520" y="60" width="220" height="80" as="geometry" />
+    </mxCell>
+    <mxCell id="local_cfg" value="config.toml (gateway/port/SNI/CA/token/policy)" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="lane_local" vertex="1">
+      <mxGeometry x="780" y="60" width="250" height="70" as="geometry" />
+    </mxCell>
+    <mxCell id="local_policy" value="Policy check (default deny)" style="shape=rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="lane_local" vertex="1">
+      <mxGeometry x="560" y="160" width="140" height="80" as="geometry" />
+    </mxCell>
+
+    <mxCell id="docker_gw" value="toppy-gw (:4433/udp QUIC/H3, :8080/tcp healthz)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="lane_docker" vertex="1">
+      <mxGeometry x="120" y="80" width="280" height="90" as="geometry" />
+    </mxCell>
+    <mxCell id="docker_echo" value="udp-echo (:9999/udp)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" parent="lane_docker" vertex="1">
+      <mxGeometry x="520" y="90" width="180" height="70" as="geometry" />
+    </mxCell>
+    <mxCell id="target_any" value="Any UDP server" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="lane_target" vertex="1">
+      <mxGeometry x="120" y="90" width="260" height="70" as="geometry" />
+    </mxCell>
+
+    <mxCell id="e1" value="UDP" style="endArrow=block;html=1;rounded=0;strokeColor=#000000;" parent="1" source="local_app" target="local_udpsock" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e2" value="UDP" style="endArrow=block;html=1;rounded=0;strokeColor=#000000;" parent="1" source="local_udpsock" target="local_cli" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e3" value="reads" style="endArrow=block;html=1;strokeColor=#000000;" parent="1" source="local_cfg" target="local_cli" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e4" value="policy evaluate" style="endArrow=block;html=1;strokeColor=#000000;" parent="1" source="local_cli" target="local_policy" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e5" value="QUIC + HTTP/3 Extended CONNECT\nTLS verify (CA), SNI\nAuthorization: Bearer &lt;token&gt;" style="endArrow=block;html=1;strokeColor=#000000;" parent="1" source="local_cli" target="docker_gw" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e7" value="UDP :9999" style="endArrow=block;html=1;strokeColor=#000000;" parent="1" source="docker_gw" target="docker_echo" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="e8" value="UDP (optional)" style="endArrow=block;html=1;strokeColor=#666666;dashed=1;" parent="1" source="docker_gw" target="target_any" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+  </root>
+</mxGraphModel>
