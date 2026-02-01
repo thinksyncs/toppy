@@ -79,7 +79,7 @@ allow = [
 ]
 EOF
 
-output="$(TOPPY_CONFIG="$config_file" TOPPY_DOCTOR_TUN=pass cargo run -p toppy-cli -- doctor --json)"
+output="$(TOPPY_CONFIG="$config_file" TOPPY_DOCTOR_TUN=pass TOPPY_DOCTOR_NET=pass cargo run -p toppy-cli -- doctor --json)"
 TOPPY_CONFIG="$config_file" cargo run -p toppy-cli -- udp --listen 127.0.0.1:19000 --target "${echo_ip}:9999" >/tmp/toppy-udp-proxy.log 2>&1 &
 udp_pid=$!
 
