@@ -143,7 +143,8 @@ flowchart LR
 
   %% --------- Notes ----------
   POL -.-|deny -> fail fast with reason| CLI
-  CLI -.-|up: local TCP forwarder\n(not MASQUE)| CLI
+  UPNOTE["up: local TCP forwarder\n(not MASQUE)"]
+  CLI -.- UPNOTE
 ```
 
 ### UDP proxy sequence (multi-client)
