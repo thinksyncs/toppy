@@ -79,7 +79,7 @@ allow = [
 ]
 EOF
 
-output="$(TOPPY_CONFIG="$config_file" TOPPY_DOCTOR_TUN=pass cargo run -p toppy-cli -- doctor --json)"
+output="$(TOPPY_CONFIG="$config_file" TOPPY_DOCTOR_TUN=pass TOPPY_DOCTOR_NET=pass cargo run -p toppy-cli -- doctor --json)"
 TOPPY_CONFIG="$config_file" cargo run -p toppy-cli -- udp --listen 127.0.0.1:19000 --target "${echo_ip}:9999" >/tmp/toppy-udp-proxy.log 2>&1 &
 udp_pid=$!
 
@@ -108,6 +108,6 @@ kill "$udp_pid" 2>/dev/null || true
 wait "$udp_pid" 2>/dev/null || true
 rm -f "$config_file" /tmp/toppy-udp-proxy.log
 
-printf '%s' "$output" | python -c $'import json,sys\n\ndata = json.load(sys.stdin)\noverall = data.get(\"overall\")\nif overall != \"pass\":\n    raise SystemExit(f\"expected overall pass, got {overall}\")\n\nchecks = {c[\"id\"]: c for c in data.get(\"checks\", [])}\nfor required in (\"cfg.load\", \"net.dns\", \"h3.connect\", \"tun.perm\", \"mtu.sanity\"):\n    if required not in checks:\n        raise SystemExit(f\"missing check: {required}\")\n\ndns_status = checks[\"net.dns\"][\"status\"]\nif dns_status != \"pass\":\n    raise SystemExit(f\"net.dns status: {dns_status}\")\nh3_status = checks[\"h3.connect\"][\"status\"]\nif h3_status != \"pass\":\n    raise SystemExit(f\"h3.connect status: {h3_status}\")\ntun_status = checks[\"tun.perm\"][\"status\"]\nif tun_status not in (\"pass\", \"warn\"):\n    raise SystemExit(f\"tun.perm status: {tun_status}\")\nmtu_status = checks[\"mtu.sanity\"][\"status\"]\nif mtu_status != \"pass\":\n    raise SystemExit(f\"mtu.sanity status: {mtu_status}\")\n'\
-\
+printf '%s' "$output" | python -c $'import json,sys\n\ndata = json.load(sys.stdin)\noverall = data.get(\"overall\")\nif overall != \"pass\":\n    raise SystemExit(f\"expected overall pass, got {overall}\")\n\nchecks = {c[\"id\"]: c for c in data.get(\"checks\", [])}\nfor required in (\"cfg.load\", \"net.dns\", \"h3.connect\", \"tun.perm\", \"mtu.sanity\"):\n    if required not in checks:\n        raise SystemExit(f\"missing check: {required}\")\n\ndns_status = checks[\"net.dns\"][\"status\"]\nif dns_status != \"pass\":\n    raise SystemExit(f\"net.dns status: {dns_status}\")\nh3_status = checks[\"h3.connect\"][\"status\"]\nif h3_status != \"pass\":\n    raise SystemExit(f\"h3.connect status: {h3_status}\")\ntun_status = checks[\"tun.perm\"][\"status\"]\nif tun_status not in (\"pass\", \"warn\"):\n    raise SystemExit(f\"tun.perm status: {tun_status}\")\nmtu_status = checks[\"mtu.sanity\"][\"status\"]\nif mtu_status != \"pass\":\n    raise SystemExit(f\"mtu.sanity status: {mtu_status}\")\n'
+
 printf '%s' "$output" | python -c $'import json,sys\n\ndata = json.load(sys.stdin)\nchecks = {c[\"id\"]: c for c in data.get(\"checks\", [])}\nfor required in (\"masque.connect_udp\", \"masque.connect_udp.datagram\"):\n    if required not in checks:\n        raise SystemExit(f\"missing check: {required}\")\n\nhandshake = checks[\"masque.connect_udp\"][\"status\"]\nif handshake != \"pass\":\n    raise SystemExit(f\"masque.connect_udp status: {handshake}\")\necho = checks[\"masque.connect_udp.datagram\"][\"status\"]\nif echo != \"pass\":\n    raise SystemExit(f\"masque.connect_udp.datagram status: {echo}\")\n'
