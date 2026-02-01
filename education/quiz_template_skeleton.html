@@ -140,8 +140,20 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">HTTP/3 runs over QUIC.</span>
-            <span data-lang="ja">HTTP/3 は QUIC 上で動作します。</span>
+            <p data-lang="en">
+              HTTP/3 is the mapping of HTTP semantics onto QUIC. QUIC is the transport protocol (built on top of UDP)
+              that provides stream multiplexing and integrates TLS 1.3, which is why HTTP/3 does not use TCP.
+            </p>
+            <p data-lang="ja">
+              HTTP/3 は「HTTP を QUIC 上にマッピングしたもの」です。QUIC は UDP 上に構築されたトランスポートで、
+              多重化や TLS 1.3 の統合などを提供するため、HTTP/3 は TCP を使いません。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">TCP is used by HTTP/1.1 and most HTTP/2 deployments; avoiding TCP head-of-line blocking is a key reason QUIC exists.</span><span data-lang="ja">TCP は HTTP/1.1 や多くの HTTP/2 で使われます。TCP の HOL（先頭行）ブロッキング回避が QUIC の理由の 1 つです。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">Correct: HTTP/3 runs over QUIC.</span><span data-lang="ja">正解: HTTP/3 は QUIC 上で動作します。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">HTTP/2 is an HTTP version (application layer), not a transport; it typically runs over TCP.</span><span data-lang="ja">HTTP/2 は HTTP のバージョン（アプリ層）で、トランスポートではありません。通常 TCP 上で動きます。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">WebSocket is an application protocol upgrade (usually over TCP); it is not the transport for HTTP/3.</span><span data-lang="ja">WebSocket は（多くの場合 TCP 上の）アプリ層の通信方式で、HTTP/3 のトランスポートではありません。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -169,8 +181,20 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">The correct protocol name is HTTP/3.</span>
-            <span data-lang="ja">正しい名称は HTTP/3 です。</span>
+            <p data-lang="en">
+              The correct protocol name is <code>HTTP/3</code> (often abbreviated <code>H3</code>). Many people
+              accidentally write “HTML3”, but that is about HTML, not the HTTP protocol.
+            </p>
+            <p data-lang="ja">
+              正しい名称は <code>HTTP/3</code>（略して <code>H3</code>）です。「HTML3」は HTML の話になってしまい、
+              HTTP のプロトコル名ではありません。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">“HTML3” is about HTML; it is not an HTTP protocol version.</span><span data-lang="ja">「HTML3」は HTML の話で、HTTP のバージョン名ではありません。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">Correct: HTTP/3 is the actual protocol name.</span><span data-lang="ja">正解: 実際の名称は HTTP/3 です。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">“HTT3” is just a typo; the official name includes “HTTP/”.</span><span data-lang="ja">「HTT3」は単なる誤記で、正式名称は「HTTP/3」です。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">“H3P” is not a standard name here; use HTTP/3 (H3).</span><span data-lang="ja">「H3P」はここでの標準名称ではありません。HTTP/3（H3）を使います。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -198,8 +222,22 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">CONNECT-UDP uses HTTP/3 Extended CONNECT.</span>
-            <span data-lang="ja">CONNECT-UDP は Extended CONNECT を使います。</span>
+            <p data-lang="en">
+              CONNECT-UDP is built on <em>Extended CONNECT</em>: the client uses HTTP’s <code>CONNECT</code> method
+              with a <code>:protocol</code> value (e.g., <code>udp</code>) to create a tunnel-like association. In
+              HTTP/3, the actual UDP payloads are carried using HTTP Datagrams.
+            </p>
+            <p data-lang="ja">
+              CONNECT-UDP は <em>Extended CONNECT</em> を土台にしています。HTTP の <code>CONNECT</code> と
+              <code>:protocol</code>（例: <code>udp</code>）を使ってトンネル状の関連付けを作り、HTTP/3 では UDP の
+              ペイロードを HTTP Datagrams で運びます。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Correct: CONNECT-UDP is specified via Extended CONNECT.</span><span data-lang="ja">正解: CONNECT-UDP は Extended CONNECT を使って定義されています。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">WebSocket is a different protocol upgrade for message-based streams; it is not CONNECT-UDP.</span><span data-lang="ja">WebSocket は別のアップグレード方式で、CONNECT-UDP ではありません。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">REST is an API design style, not a protocol feature used to define CONNECT-UDP.</span><span data-lang="ja">REST は API 設計スタイルで、CONNECT-UDP を定義する HTTP 機能ではありません。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">SSE is server-to-client streaming over HTTP; it does not provide UDP tunneling.</span><span data-lang="ja">SSE はサーバ→クライアントのストリーミングで、UDP トンネリング用途ではありません。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -243,8 +281,20 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">toppy uses CONNECT-UDP over HTTP/3 with HTTP Datagrams to carry UDP payloads.</span>
-            <span data-lang="ja">toppy は HTTP/3 + HTTP Datagrams 上の CONNECT-UDP で UDP を運びます。</span>
+            <p data-lang="en">
+              In toppy, <code>toppy udp</code> listens locally and forwards UDP payloads to the gateway using
+              CONNECT-UDP over HTTP/3. The UDP bytes themselves are carried in HTTP Datagrams (not converted to TCP).
+            </p>
+            <p data-lang="ja">
+              toppy では <code>toppy udp</code> がローカルで待ち受け、HTTP/3 上の CONNECT-UDP を使ってゲートウェイへ
+              UDP を転送します。UDP のバイト列は HTTP Datagrams に載せて運び、TCP へ変換しません。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Correct: UDP payloads are tunneled over HTTP/3 using CONNECT-UDP + HTTP Datagrams.</span><span data-lang="ja">正解: CONNECT-UDP + HTTP Datagrams で HTTP/3 上に UDP を運びます。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">toppy can forward TCP via <code>toppy up</code>, but that is separate from CONNECT-UDP.</span><span data-lang="ja">TCP は <code>toppy up</code> で転送できますが、CONNECT-UDP とは別経路です。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">ICMP is not what CONNECT-UDP is for; doctor may do “ping-like” checks, but ICMP is not tunneled here.</span><span data-lang="ja">ICMP は CONNECT-UDP の用途ではありません（doctor の疎通確認はあっても ICMP をトンネルするわけではありません）。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">DNS can be a UDP target, but toppy is not limited to DNS-only traffic.</span><span data-lang="ja">DNS も UDP の 1 例ですが、toppy は DNS 専用ではありません。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -288,8 +338,20 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">HTTP Datagrams carry UDP payloads for CONNECT-UDP.</span>
-            <span data-lang="ja">HTTP Datagrams は CONNECT-UDP の UDP ペイロード搬送に使います。</span>
+            <p data-lang="en">
+              HTTP Datagrams provide an unreliable datagram delivery mechanism in HTTP/3. In toppy’s CONNECT-UDP flow,
+              they carry the UDP payload bytes end-to-end between the CLI and the gateway.
+            </p>
+            <p data-lang="ja">
+              HTTP Datagrams は HTTP/3 における “非信頼データグラム” 搬送の仕組みです。toppy の CONNECT-UDP では、
+              UDP のペイロードを CLI とゲートウェイ間でそのまま運びます。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Correct: used to deliver UDP payloads (datagram-style) for CONNECT-UDP.</span><span data-lang="ja">正解: CONNECT-UDP の UDP ペイロードをデータグラムとして運びます。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">TLS certificates are exchanged during the TLS handshake, not “downloaded” via HTTP Datagrams.</span><span data-lang="ja">TLS 証明書は TLS ハンドシェイクでやり取りされ、HTTP Datagrams で “ダウンロード” するものではありません。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">Metrics are typically exported via HTTP requests or telemetry protocols, not HTTP Datagrams.</span><span data-lang="ja">メトリクスは通常 HTTP リクエストやテレメトリで送ります。HTTP Datagrams の用途ではありません。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">File uploads are better served by reliable streams; HTTP Datagrams are intentionally unreliable.</span><span data-lang="ja">ファイルアップロードは信頼性が必要なためストリーム向きです。HTTP Datagrams は意図的に非信頼です。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -333,8 +395,22 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">toppy is a workspace for a MASQUE-capable gateway and CLI experiments.</span>
-            <span data-lang="ja">MASQUE 対応ゲートウェイと CLI の実験用ワークスペースです。</span>
+            <p data-lang="en">
+              toppy is a Rust workspace for experimenting with a MASQUE-capable gateway and a small CLI client:
+              QUIC/HTTP/3 connectivity checks (<code>doctor</code>), token acquisition (<code>login</code>), and
+              policy-guarded local forwarding (<code>udp</code>/<code>up</code>).
+            </p>
+            <p data-lang="ja">
+              toppy は MASQUE 対応ゲートウェイと CLI クライアントの実験用 Rust ワークスペースです。
+              <code>doctor</code> による疎通確認、<code>login</code> によるトークン取得、ポリシーでガードされた
+              ローカル転送（<code>udp</code>/<code>up</code>）を扱います。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Correct: the repo focuses on QUIC/HTTP/3 + CONNECT-UDP experiments with a gateway + CLI.</span><span data-lang="ja">正解: QUIC/HTTP/3 + CONNECT-UDP をゲートウェイ + CLI で実験するのが主目的です。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">Not related: toppy does not aim to manage clusters or scheduling like Kubernetes.</span><span data-lang="ja">不正解: toppy は Kubernetes のようなクラスタ管理/スケジューリングを目的にしていません。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">Not related: this is not a UI framework project; the HTML here is just an education page.</span><span data-lang="ja">不正解: UI フレームワークのプロジェクトではありません（この HTML は学習用ページです）。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">Not related: no blockchain functionality is involved.</span><span data-lang="ja">不正解: ブロックチェーン機能はありません。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -378,8 +454,22 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">`toppy up` is a local TCP forwarder, not a MASQUE tunnel yet.</span>
-            <span data-lang="ja">現時点ではローカル TCP フォワーダです。</span>
+            <p data-lang="en">
+              <code>toppy up</code> is currently a local TCP forwarder guarded by policy (and rate-limited per
+              connection). It is explicitly <em>not</em> a MASQUE tunnel yet, so it should be understood as a local
+              developer tool rather than a full network tunnel.
+            </p>
+            <p data-lang="ja">
+              <code>toppy up</code> は現時点ではポリシーでガードされたローカル TCP フォワーダ（接続ごとのレート制限あり）
+              です。明示的に「まだ MASQUE トンネルではない」ため、フルのトンネルではなく開発向けのローカルツールとして
+              捉えるのが適切です。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Not yet: the project may evolve toward MASQUE tunneling, but <code>up</code> is not that today.</span><span data-lang="ja">不正解: 将来的に MASQUE に近づく可能性はありますが、現状の <code>up</code> はそれではありません。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">Correct: local TCP forwarding with policy checks (not MASQUE).</span><span data-lang="ja">正解: ポリシー付きのローカル TCP 転送（MASQUE ではない）です。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">UDP proxying is handled by <code>toppy udp</code>, not <code>toppy up</code>.</span><span data-lang="ja">不正解: UDP は <code>toppy udp</code> の担当で、<code>toppy up</code> ではありません。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">A VPN interface implies system-level routing/TUN; <code>up</code> is only per-connection forwarding.</span><span data-lang="ja">不正解: VPN は TUN/ルーティング等の OS レベルを含みますが、<code>up</code> は接続単位の転送です。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -408,8 +498,23 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">The workspace includes CLI, gateway, core, and proto.</span>
-            <span data-lang="ja">CLI・ゲートウェイ・共通・プロトが含まれます。</span>
+            <p data-lang="en">
+              This repo is organized as a Rust workspace. The main crates are <code>toppy-cli</code> (CLI),
+              <code>toppy-gw</code> (gateway), <code>toppy-core</code> (shared config/policy/logging), and
+              <code>toppy-proto</code> (protocol definitions). There is no <code>toppy-db</code> crate here.
+            </p>
+            <p data-lang="ja">
+              このリポジトリは Rust ワークスペースとして構成されています。主要クレートは
+              <code>toppy-cli</code>（CLI）、<code>toppy-gw</code>（ゲートウェイ）、<code>toppy-core</code>（共通機能）、
+              <code>toppy-proto</code>（プロトコル定義）です。<code>toppy-db</code> というクレートは存在しません。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en"><code>toppy-cli</code>: the end-user CLI (<code>doctor</code>/<code>login</code>/<code>udp</code>/<code>up</code>).</span><span data-lang="ja"><code>toppy-cli</code>: 利用者向け CLI（<code>doctor</code>/<code>login</code>/<code>udp</code>/<code>up</code>）。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en"><code>toppy-gw</code>: QUIC + HTTP/3 gateway (CONNECT-UDP echo/forward).</span><span data-lang="ja"><code>toppy-gw</code>: QUIC + HTTP/3 ゲートウェイ（CONNECT-UDP の echo/forward）。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en"><code>toppy-core</code>: shared logic (config, auth helpers, policy, audit).</span><span data-lang="ja"><code>toppy-core</code>: 共有ロジック（設定、認証ヘルパー、ポリシー、監査）。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en"><code>toppy-proto</code>: message/capsule definitions used between client and gateway.</span><span data-lang="ja"><code>toppy-proto</code>: クライアント↔ゲートウェイ間のメッセージ/カプセル定義。</span></div>
+              <div class="opt"><span class="k">E</span><span data-lang="en"><code>toppy-db</code>: not present in this repo (distractor).</span><span data-lang="ja"><code>toppy-db</code>: このリポジトリには存在しません（ひっかけ）。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -437,8 +542,21 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">`toppy-gw` is the QUIC + HTTP/3 gateway.</span>
-            <span data-lang="ja">`toppy-gw` がゲートウェイです。</span>
+            <p data-lang="en">
+              <code>toppy-gw</code> is the gateway process: it speaks QUIC + HTTP/3, accepts Extended CONNECT /
+              CONNECT-UDP requests, and provides echo/forward endpoints. The other crates support the gateway or act
+              as the client side.
+            </p>
+            <p data-lang="ja">
+              <code>toppy-gw</code> はゲートウェイ本体です。QUIC + HTTP/3 を話し、Extended CONNECT / CONNECT-UDP を受理し、
+              echo/forward のエンドポイントを提供します。他のクレートは補助やクライアント側です。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en"><code>toppy-cli</code> is the client-side CLI, not the gateway.</span><span data-lang="ja"><code>toppy-cli</code> はクライアント側の CLI で、ゲートウェイではありません。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">Correct: <code>toppy-gw</code> is the QUIC + HTTP/3 gateway.</span><span data-lang="ja">正解: <code>toppy-gw</code> が QUIC + HTTP/3 ゲートウェイです。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en"><code>toppy-core</code> is a shared library crate, not a running gateway service.</span><span data-lang="ja"><code>toppy-core</code> は共有ライブラリで、ゲートウェイの実行体ではありません。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en"><code>toppy-proto</code> contains protocol definitions; it is not the gateway executable.</span><span data-lang="ja"><code>toppy-proto</code> はプロトコル定義で、ゲートウェイ実行体ではありません。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -466,8 +584,20 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">Default config path is `~/.config/toppy/config.toml`.</span>
-            <span data-lang="ja">デフォルトは `~/.config/toppy/config.toml` です。</span>
+            <p data-lang="en">
+              toppy’s default config path follows the common XDG convention:
+              <code>~/.config/toppy/config.toml</code>. You can override it via <code>TOPPY_CONFIG</code>.
+            </p>
+            <p data-lang="ja">
+              toppy のデフォルト設定パスは XDG の慣習に従い <code>~/.config/toppy/config.toml</code> です。
+              <code>TOPPY_CONFIG</code> で上書きできます。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Correct: this is the documented default path.</span><span data-lang="ja">正解: ドキュメント上のデフォルトパスです。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en"><code>/etc</code> would be a system-wide config location, but toppy defaults to per-user config.</span><span data-lang="ja"><code>/etc</code> はシステム全体向けの場所ですが、toppy のデフォルトはユーザーごとです。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">A project-local <code>./config.toml</code> is not the default (though you can point to one using <code>TOPPY_CONFIG</code>).</span><span data-lang="ja">プロジェクト直下 <code>./config.toml</code> はデフォルトではありません（<code>TOPPY_CONFIG</code> で指定は可能）。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">Wrong file name/format for the default; toppy uses <code>config.toml</code> under <code>~/.config</code>.</span><span data-lang="ja">ファイル名/形式が違います。デフォルトは <code>~/.config</code> 配下の <code>config.toml</code> です。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -495,8 +625,20 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">`toppy login` performs token acquisition and caching.</span>
-            <span data-lang="ja">`toppy login` がトークン取得・キャッシュです。</span>
+            <p data-lang="en">
+              <code>toppy login</code> performs token acquisition (OIDC device-code, or SAML-via-broker mode) and
+              caches the token locally so other commands (like <code>doctor</code> / <code>udp</code>) can reuse it.
+            </p>
+            <p data-lang="ja">
+              <code>toppy login</code> はトークン取得（OIDC device-code、または broker 経由の SAML モード）を行い、
+              後続コマンド（<code>doctor</code>/<code>udp</code> など）が再利用できるようローカルにキャッシュします。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en"><code>doctor</code> runs diagnostics; it may validate/refresh an existing token, but it is not the primary acquisition flow.</span><span data-lang="ja"><code>doctor</code> は診断です。既存トークンの検証/更新はあり得ますが、取得フローの主体ではありません。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">Correct: <code>login</code> is the token acquisition command.</span><span data-lang="ja">正解: トークン取得は <code>login</code> です。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en"><code>udp</code> forwards UDP; it assumes auth is already available.</span><span data-lang="ja"><code>udp</code> は UDP 転送で、認証は前提（事前に用意）です。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en"><code>audit verify</code> is for validating the local audit log hash chain.</span><span data-lang="ja"><code>audit verify</code> はローカル監査ログの検証です。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -540,8 +682,20 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">No allow rules means default deny.</span>
-            <span data-lang="ja">allow ルールが無い場合はデフォルト deny です。</span>
+            <p data-lang="en">
+              toppy’s local forwarders are policy-guarded. If you configure no <code>[policy]</code> allow rules,
+              there is nothing to match, so the evaluation becomes “deny by default” (fail fast with a reason).
+            </p>
+            <p data-lang="ja">
+              toppy のローカル転送はポリシーでガードされます。<code>[policy]</code> の allow ルールが無い場合、
+              マッチする条件が 0 件なので「デフォルト deny（即失敗）」になります。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Allow-all would be unsafe; toppy chooses a secure default when rules are missing.</span><span data-lang="ja">全許可は危険です。ルール未設定時は安全側（deny）に倒します。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">Correct: default deny when allow rules are empty.</span><span data-lang="ja">正解: allow が空ならデフォルト deny です。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">Random behavior would be non-deterministic and is not how policy evaluation works.</span><span data-lang="ja">ランダムは非決定であり、ポリシー評価の挙動ではありません。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">There is no interactive prompt in policy evaluation; it is a deterministic allow/deny decision.</span><span data-lang="ja">ポリシーは対話的に確認しません。決定的に allow/deny を返します。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -569,8 +723,22 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">The local app talks to the CLI, then gateway, then target, and returns back the same way.</span>
-            <span data-lang="ja">CLI→GW→ターゲット→戻りの順です。</span>
+            <p data-lang="en">
+              In toppy’s UDP proxy model, the local application sends UDP to a local socket that the CLI is listening
+              on. The CLI then forwards the payload to the gateway over CONNECT-UDP (HTTP/3), and the gateway sends it
+              to the target UDP server. Responses return on the same path back to the local app.
+            </p>
+            <p data-lang="ja">
+              toppy の UDP プロキシでは、ローカルアプリは CLI が待ち受けるローカル UDP ソケットへ送信します。CLI は
+              CONNECT-UDP（HTTP/3）でゲートウェイへ転送し、ゲートウェイがターゲット UDP サーバへ送信します。応答も同じ
+              経路で戻ってきます。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Correct: App ↔ CLI (local), CLI ↔ GW (HTTP/3), GW ↔ Target (UDP), then return.</span><span data-lang="ja">正解: App↔CLI（ローカル）→CLI↔GW（HTTP/3）→GW↔Target（UDP）→戻り、の流れです。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en">Wrong order: the local app does not speak to the gateway directly; the CLI is the local proxy endpoint.</span><span data-lang="ja">不正解: ローカルアプリが直接 GW と話すわけではありません。ローカルの窓口は CLI です。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">Wrong direction: the CLI is not “behind” the app; the app sends to the CLI, not the other way around.</span><span data-lang="ja">不正解: CLI→App ではなく、App→CLI です。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en">This bypasses toppy entirely, so it is not the “toppy forwarding path”.</span><span data-lang="ja">不正解: これは toppy を経由しないため「toppy の転送経路」ではありません。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -598,8 +766,23 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">Echo uses `/udp/` and forwarding uses `/udp-forward/`.</span>
-            <span data-lang="ja">`udp` は echo、`udp-forward` は転送です。</span>
+            <p data-lang="en">
+              toppy-gw exposes two CONNECT-UDP endpoints under <code>/.well-known/masque/</code>:
+              <code>/udp/&lt;host&gt;/&lt;port&gt;/</code> is used for datagram echo checks (doctor), and
+              <code>/udp-forward/&lt;host&gt;/&lt;port&gt;/</code> is used for actual UDP forwarding. Health endpoints
+              like <code>/healthz</code> are plain HTTP and not CONNECT-UDP.
+            </p>
+            <p data-lang="ja">
+              toppy-gw は <code>/.well-known/masque/</code> 配下に 2 つの CONNECT-UDP エンドポイントを持ちます。
+              <code>/udp/&lt;host&gt;/&lt;port&gt;/</code> は疎通確認用の datagram echo（doctor）、<code>/udp-forward/&lt;host&gt;/&lt;port&gt;/</code>
+              は実際の UDP 転送です。<code>/healthz</code> などは通常の HTTP ヘルスチェックで、CONNECT-UDP ではありません。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">A</span><span data-lang="en">Correct: CONNECT-UDP echo endpoint (doctor).</span><span data-lang="ja">正解: CONNECT-UDP の echo エンドポイント（doctor 用）。</span></div>
+              <div class="opt"><span class="k">B</span><span data-lang="en"><code>/healthz</code> is a regular HTTP health check endpoint.</span><span data-lang="ja"><code>/healthz</code> は通常の HTTP ヘルスチェックです。</span></div>
+              <div class="opt"><span class="k">C</span><span data-lang="en">Correct: CONNECT-UDP forwarding endpoint.</span><span data-lang="ja">正解: CONNECT-UDP の forwarding エンドポイント。</span></div>
+              <div class="opt"><span class="k">D</span><span data-lang="en"><code>/metrics</code> is a common pattern, but it is not the CONNECT-UDP endpoint here.</span><span data-lang="ja"><code>/metrics</code> はよくあるパスですが、ここでの CONNECT-UDP エンドポイントではありません。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -622,8 +805,19 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">The key is `server_name`.</span>
-            <span data-lang="ja">`server_name` が TLS SNI です。</span>
+            <p data-lang="en">
+              In toppy’s config, the TLS SNI value is configured via <code>server_name</code>. This is the name sent
+              in the TLS handshake (SNI) and is distinct from the gateway host/IP (<code>gateway</code>) and port
+              (<code>port</code>).
+            </p>
+            <p data-lang="ja">
+              toppy の設定では TLS SNI は <code>server_name</code> で指定します。TLS ハンドシェイクで送る “名前” であり、
+              ゲートウェイのホスト/IP（<code>gateway</code>）やポート（<code>port</code>）とは別物です。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">Tip</span><span data-lang="en">Expected answer: <code>server_name</code> (exact key name).</span><span data-lang="ja">想定解: <code>server_name</code>（キー名をそのまま）。</span></div>
+              <div class="opt"><span class="k">Gotcha</span><span data-lang="en"><code>gateway</code> is “where to connect”, <code>server_name</code> is “what name to present/verify in TLS”.</span><span data-lang="ja"><code>gateway</code> は接続先、<code>server_name</code> は TLS で提示/検証する名前です。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -646,8 +840,17 @@
               <span data-lang="en">Explanation:</span>
               <span data-lang="ja">解説:</span>
             </strong>
-            <span data-lang="en">Use `toppy audit verify` (with optional args).</span>
-            <span data-lang="ja">`toppy audit verify` を使います。</span>
+            <p data-lang="en">
+              Use <code>toppy audit verify</code> to validate the integrity of the local tamper-evident audit log
+              (hash-chain JSONL). If the file was modified or entries were removed/reordered, verification should fail.
+            </p>
+            <p data-lang="ja">
+              <code>toppy audit verify</code> はローカル監査ログ（改ざん検知用のハッシュチェーン JSONL）の整合性検証です。
+              改ざん・削除・並び替えなどがあると検証に失敗するはずです。
+            </p>
+            <div class="optlist">
+              <div class="opt"><span class="k">Example</span><span data-lang="en"><code>toppy audit verify</code> (or <code>toppy audit verify --path /path/to/audit.jsonl</code>).</span><span data-lang="ja"><code>toppy audit verify</code>（または <code>toppy audit verify --path /path/to/audit.jsonl</code>）。</span></div>
+            </div>
           </div>
         </div>
       </article>
@@ -748,6 +951,85 @@
       setLanguage(initial,false);
     }
     function showExplain(q,show=true){const exp=q.querySelector('.explain'); if(!exp) return; exp.classList.toggle('show',!!show);}    
+    function isLearningMode(){ const lm=$('#learningMode'); return lm?!!lm.checked:true; }
+
+    function clearQuestionFeedback(q){
+      q.classList.remove('is-correct','is-incorrect');
+      q.querySelectorAll('label.choice').forEach(l=>{
+        l.classList.remove('is-selected','is-correct','is-incorrect','is-missed');
+      });
+      const t=q.querySelector('input[type=text]');
+      if(t) t.classList.remove('is-correct','is-incorrect');
+    }
+
+    function applyQuestionFeedback(q){
+      clearQuestionFeedback(q);
+      const type=q.dataset.type;
+      const ans=(q.dataset.answer||'').trim();
+      const r=evaluateQuestion(q);
+      if(r.ok===true) q.classList.add('is-correct');
+      if(r.ok===false) q.classList.add('is-incorrect');
+
+      if(type==='mc'){
+        q.querySelectorAll('input[type=radio]').forEach(input=>{
+          const label=input.closest('label.choice'); if(!label) return;
+          if(input.checked) label.classList.add('is-selected');
+          if(input.value===ans) label.classList.add('is-correct');
+          if(input.checked && input.value!==ans) label.classList.add('is-incorrect');
+        });
+      }else if(type==='ms'){
+        const gold=new Set(ans.split(',').map(s=>s.trim()).filter(Boolean));
+        q.querySelectorAll('input[type=checkbox]').forEach(input=>{
+          const label=input.closest('label.choice'); if(!label) return;
+          if(input.checked) label.classList.add('is-selected');
+          if(gold.has(input.value)) label.classList.add('is-correct');
+          if(input.checked && !gold.has(input.value)) label.classList.add('is-incorrect');
+          if(!input.checked && gold.has(input.value)) label.classList.add('is-missed');
+        });
+      }else if(type==='text'){
+        const t=q.querySelector('input[type=text]');
+        if(t){
+          if(r.ok===true) t.classList.add('is-correct');
+          if(r.ok===false) t.classList.add('is-incorrect');
+        }
+      }
+    }
+
+    function updateQuestionUI(q){
+      const learning=isLearningMode();
+      const answered=isAnswered(q);
+      if(learning && answered){
+        showExplain(q,true);
+        applyQuestionFeedback(q);
+      }else{
+        showExplain(q,false);
+        clearQuestionFeedback(q);
+      }
+    }
+
+    function refreshAllQuestions(){ $$('#questions .q').forEach(q=>updateQuestionUI(q)); }
+    function attachQuestionHandlers(){
+      $$('#questions .q').forEach(q=>{
+        q.addEventListener('change',e=>{
+          const t=e.target;
+          if(!(t instanceof HTMLElement)) return;
+          if(t.matches('input[type=radio],input[type=checkbox]')){
+            updateQuestionUI(q);
+            updateLiveScore();
+          }
+        });
+        const text=q.querySelector('input[type=text]');
+        if(text){
+          text.addEventListener('keydown',e=>{
+            if(e.key==='Enter'){ e.preventDefault(); text.blur(); }
+          });
+          text.addEventListener('blur',()=>{
+            updateQuestionUI(q);
+            updateLiveScore();
+          });
+        }
+      });
+    }
 
     function isAnswered(q){const t=q.dataset.type; if(t==='mc') return !!q.querySelector('input[type=radio]:checked'); if(t==='ms') return q.querySelectorAll('input[type=checkbox]:checked').length>0; if(t==='text'){const v=q.querySelector('input[type=text]')?.value.trim(); return !!v;} return false;}
 
@@ -809,7 +1091,21 @@
     // Handlers
     $('#themeToggle')?.addEventListener('click',()=>{toggleTheme(); updateLiveScore();});
     $('#langToggle')?.addEventListener('click',()=>{const next=getLocale().startsWith('ja')?'en':'ja'; setLanguage(next,true);});
-    $('#mode-badge').addEventListener('click',()=>{let lm=$('#learningMode'); if(!lm){ lm=document.createElement('input'); lm.type='checkbox'; lm.id='learningMode'; lm.checked=true; lm.style.display='none'; document.body.appendChild(lm);} lm.checked=!lm.checked; updateModeBadgeLabel(); updateLiveScore();});
+    $('#mode-badge').addEventListener('click',()=>{
+      let lm=$('#learningMode');
+      if(!lm){
+        lm=document.createElement('input');
+        lm.type='checkbox';
+        lm.id='learningMode';
+        lm.checked=true;
+        lm.style.display='none';
+        document.body.appendChild(lm);
+      }
+      lm.checked=!lm.checked;
+      updateModeBadgeLabel();
+      refreshAllQuestions();
+      updateLiveScore();
+    });
     const bottomBtn=$('#bottomShowAnswers');
     if(bottomBtn){ bottomBtn.addEventListener('click',()=>{ showAnswersAndScore(bottomBtn.dataset.resultsTarget); }); }
 
@@ -817,8 +1113,18 @@
     applyInitialTheme();
     try{ if(!localStorage.getItem('quizTheme')){ setTheme(prefersDark.matches?'dark':'light',false);} }catch(_){ }
     applySettings();
-    if(!$('#learningMode')){ const lm=document.createElement('input'); lm.type='checkbox'; lm.id='learningMode'; lm.checked=true; lm.style.display='none'; document.body.appendChild(lm);} 
+    if(!$('#learningMode')){
+      const S=window.DRILL_SETTINGS||{};
+      const lm=document.createElement('input');
+      lm.type='checkbox';
+      lm.id='learningMode';
+      lm.checked=(S.LEARNING_MODE_DEFAULT!==false);
+      lm.style.display='none';
+      document.body.appendChild(lm);
+    }
     updateModeBadgeLabel();
+    attachQuestionHandlers();
+    refreshAllQuestions();
     updateLiveScore();
     const y=new Date().getFullYear(); const b=window.DRILL_SETTINGS?.BRAND_NAME||'ToppyMicroServices'; const c=$('#copyright'); if(c){ c.textContent='© '+y+' '+b+'. All rights reserved.'; }
   })();
