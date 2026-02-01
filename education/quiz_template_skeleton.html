@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Toppy Fundamentals Quiz (EN/JP) | ToppyMicroServices</title>
+  <meta name="description" content="Bilingual (EN/JP) quiz on QUIC, HTTP/3, CONNECT-UDP, and toppy architecture." />
+  <link rel="canonical" href="https://toppymicros.com/education/quiz_template_skeleton.html" />
+
+  <!-- Icons -->
+  <link rel="icon" href="https://www.toppymicros.com/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="https://www.toppymicros.com/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="https://www.toppymicros.com/apple-touch-icon.png" sizes="180x180">
+  
+  <!-- 
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+  -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Toppy Fundamentals Quiz (EN/JP)" />
+  <meta property="og:description" content="Check knowledge of QUIC, HTTP/3, CONNECT-UDP, and toppy structure." />
+  <meta property="og:url" content="https://toppymicros.com/education/quiz_template_skeleton.html" />
+  <meta property="og:image" content="https://toppymicros.com/og-brand-clean.png" />
+  <meta property="og:site_name" content="ToppyMicroServices" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Toppy Fundamentals Quiz (EN/JP)" />
+  <meta name="twitter:description" content="Bilingual quiz on QUIC, HTTP/3, CONNECT-UDP, and toppy structure." />
+  <meta name="twitter:image" content="https://toppymicros.com/og-brand-clean.png" />
+  <link rel="stylesheet" href="quiz.css" />
+  <script defer data-domain="toppymicros.com" data-auto="false" src="https://plausible.io/js/script.tag"></script>
+  <script defer src="../assets/global.js"></script>
+</head>
+<body data-theme="light">
+  <script>
+    window.DRILL_SETTINGS = {
+      SKILL_NAME: "Toppy Fundamentals",
+      SKILL_SUBTITLE: "QUIC / HTTP/3 / CONNECT-UDP / Structure ・構成",
+      GOAL_DESCRIPTION: "Check terms, purpose, and architecture of toppy. / 用語・目的・構成の理解を確認",
+      LEARNING_MODE_DEFAULT: true,
+      BRAND_NAME: "ToppyMicroServices",
+      BRAND_LOGO: "og-brand-clean.min.png",
+      BRAND_URL: "../index.html"
+    };
+  </script>
+  <div class="container">
+    <header>
+      <div>
+        <div class="brand">
+          <a id="brand-link" href="../index.html" aria-label="Home">
+            <img id="brand-logo" alt="ToppyMicroServices logo" src="og-brand-clean.min.png" width="40" height="40" style="display:inline-block">
+            <span id="brand-name" class="name">ToppyMicroServices</span>
+          </a>
+        </div>
+        <h1 id="title">Toppy Fundamentals Quiz</h1>
+        <h2 id="subtitle">Bilingual check of key terms, purpose, and structure / 用語・目的・構成の確認</h2>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button type="button" class="theme-toggle" id="themeToggle" aria-pressed="false">🌞 Light</button>
+        <button type="button" class="badge clickable" id="mode-badge" aria-live="polite" aria-pressed="true" title="Toggle learning/test mode">Learning Mode</button>
+        <span id="score-badge" aria-live="polite" title="Live Score">0 / 0</span>
+      </div>
+    </header>
+
+    <details class="cheatsheet card">
+      <summary>Cheat Sheet (reference)</summary>
+      <div class="sheet">
+        <ul>
+          <li>QUIC: UDP-based transport used by HTTP/3. / HTTP/3 が使う UDP ベースのトランスポート。</li>
+          <li>HTTP/3: HTTP over QUIC. / QUIC 上の HTTP。</li>
+          <li>CONNECT-UDP: HTTP/3 Extended CONNECT for UDP forwarding. / UDP 転送用 Extended CONNECT。</li>
+          <li>HTTP Datagrams: carry UDP payloads in CONNECT-UDP. / CONNECT-UDP の UDP ペイロード搬送。</li>
+          <li>MASQUE: proxying over QUIC/HTTP (toppy experiments with it). / QUIC/HTTP のプロキシ仕様群。</li>
+          <li>Key config: `server_name` is TLS SNI. / `server_name` は TLS SNI。</li>
+        </ul>
+      </div>
+    </details>
+
+    <section id="questions">
+      <article class="q card" data-id="Q1" data-type="mc" data-answer="b">
+        <header><h4>Q1: Which transport does HTTP/3 use? / HTTP/3 のトランスポートはどれ？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q1" value="a"> A. TCP</label>
+            <label class="choice"><input type="radio" name="Q1" value="b"> B. QUIC</label>
+            <label class="choice"><input type="radio" name="Q1" value="c"> C. HTTP/2</label>
+            <label class="choice"><input type="radio" name="Q1" value="d"> D. WebSocket</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> HTTP/3 runs over QUIC. / HTTP/3 は QUIC 上で動作します。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q2" data-type="mc" data-answer="b">
+        <header><h4>Q2: Correct term? / 正しい表記は？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q2" value="a"> A. HTML3</label>
+            <label class="choice"><input type="radio" name="Q2" value="b"> B. HTTP/3</label>
+            <label class="choice"><input type="radio" name="Q2" value="c"> C. HTT3</label>
+            <label class="choice"><input type="radio" name="Q2" value="d"> D. H3P</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> The correct protocol name is HTTP/3. / 正しい名称は HTTP/3 です。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q3" data-type="mc" data-answer="a">
+        <header><h4>Q3: CONNECT-UDP is defined using which HTTP feature? / CONNECT-UDP はどの HTTP 機能を使う？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q3" value="a"> A. Extended CONNECT</label>
+            <label class="choice"><input type="radio" name="Q3" value="b"> B. WebSocket</label>
+            <label class="choice"><input type="radio" name="Q3" value="c"> C. REST</label>
+            <label class="choice"><input type="radio" name="Q3" value="d"> D. Server-Sent Events</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> CONNECT-UDP uses HTTP/3 Extended CONNECT. / CONNECT-UDP は Extended CONNECT を使います。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q4" data-type="mc" data-answer="a">
+        <header><h4>Q4: In toppy, CONNECT-UDP forwards what? / toppy の CONNECT-UDP は何を転送？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q4" value="a"> A. UDP payloads over HTTP/3 + HTTP Datagrams</label>
+            <label class="choice"><input type="radio" name="Q4" value="b"> B. TCP streams</label>
+            <label class="choice"><input type="radio" name="Q4" value="c"> C. ICMP ping packets</label>
+            <label class="choice"><input type="radio" name="Q4" value="d"> D. DNS only</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> toppy uses CONNECT-UDP over HTTP/3 with HTTP Datagrams to carry UDP payloads. / HTTP/3 + HTTP Datagrams で UDP を運びます。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q5" data-type="mc" data-answer="a">
+        <header><h4>Q5: HTTP Datagrams in toppy are used for ___. / toppy の HTTP Datagrams の用途は？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q5" value="a"> A. UDP payload delivery</label>
+            <label class="choice"><input type="radio" name="Q5" value="b"> B. TLS certificate download</label>
+            <label class="choice"><input type="radio" name="Q5" value="c"> C. Metrics export</label>
+            <label class="choice"><input type="radio" name="Q5" value="d"> D. File uploads</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> HTTP Datagrams carry UDP payloads for CONNECT-UDP. / CONNECT-UDP の UDP ペイロード搬送に使います。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q6" data-type="mc" data-answer="a">
+        <header><h4>Q6: What is toppy primarily for? / toppy の主目的は？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q6" value="a"> A. Experiment with a MASQUE-capable gateway + CLI for QUIC/HTTP/3 CONNECT-UDP</label>
+            <label class="choice"><input type="radio" name="Q6" value="b"> B. Replace Kubernetes</label>
+            <label class="choice"><input type="radio" name="Q6" value="c"> C. Build a UI framework</label>
+            <label class="choice"><input type="radio" name="Q6" value="d"> D. Run a blockchain network</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> toppy is a workspace for a MASQUE-capable gateway and CLI experiments. / MASQUE 対応ゲートウェイと CLI の実験用ワークスペースです。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q7" data-type="mc" data-answer="b">
+        <header><h4>Q7: `toppy up` is currently: / `toppy up` は現在どれ？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q7" value="a"> A. MASQUE tunnel</label>
+            <label class="choice"><input type="radio" name="Q7" value="b"> B. Local TCP forwarder (not MASQUE)</label>
+            <label class="choice"><input type="radio" name="Q7" value="c"> C. UDP proxy</label>
+            <label class="choice"><input type="radio" name="Q7" value="d"> D. VPN interface</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> `toppy up` is a local TCP forwarder, not a MASQUE tunnel yet. / 現時点ではローカル TCP フォワーダです。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q8" data-type="ms" data-answer="a,b,c,d">
+        <header><h4>Q8: Select all workspace crates. / ワークスペースの構成クレートをすべて選べ</h4><span class="type">Multi-Select</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="checkbox" name="Q8" value="a"> A. toppy-cli</label>
+            <label class="choice"><input type="checkbox" name="Q8" value="b"> B. toppy-gw</label>
+            <label class="choice"><input type="checkbox" name="Q8" value="c"> C. toppy-core</label>
+            <label class="choice"><input type="checkbox" name="Q8" value="d"> D. toppy-proto</label>
+            <label class="choice"><input type="checkbox" name="Q8" value="e"> E. toppy-db</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> The workspace includes CLI, gateway, core, and proto. / CLI・ゲートウェイ・共通・プロトが含まれます。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q9" data-type="mc" data-answer="b">
+        <header><h4>Q9: Which component is the QUIC + HTTP/3 gateway? / QUIC + HTTP/3 ゲートウェイは？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q9" value="a"> A. toppy-cli</label>
+            <label class="choice"><input type="radio" name="Q9" value="b"> B. toppy-gw</label>
+            <label class="choice"><input type="radio" name="Q9" value="c"> C. toppy-core</label>
+            <label class="choice"><input type="radio" name="Q9" value="d"> D. toppy-proto</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> `toppy-gw` is the QUIC + HTTP/3 gateway. / `toppy-gw` がゲートウェイです。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q10" data-type="mc" data-answer="a">
+        <header><h4>Q10: Default config path is: / デフォルトの設定パスは？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q10" value="a"> A. ~/.config/toppy/config.toml</label>
+            <label class="choice"><input type="radio" name="Q10" value="b"> B. /etc/toppy/config.toml</label>
+            <label class="choice"><input type="radio" name="Q10" value="c"> C. ./config.toml</label>
+            <label class="choice"><input type="radio" name="Q10" value="d"> D. ~/.toppy/config.json</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> Default config path is `~/.config/toppy/config.toml`. / デフォルトは `~/.config/toppy/config.toml` です。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q11" data-type="mc" data-answer="b">
+        <header><h4>Q11: Which command acquires and caches tokens? / トークン取得・キャッシュを行うコマンドは？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q11" value="a"> A. toppy doctor</label>
+            <label class="choice"><input type="radio" name="Q11" value="b"> B. toppy login</label>
+            <label class="choice"><input type="radio" name="Q11" value="c"> C. toppy udp</label>
+            <label class="choice"><input type="radio" name="Q11" value="d"> D. toppy audit verify</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> `toppy login` performs token acquisition and caching. / `toppy login` がトークン取得・キャッシュです。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q12" data-type="mc" data-answer="b">
+        <header><h4>Q12: If no allow rules are configured, policy result is: / allow ルールが無い場合のポリシーは？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q12" value="a"> A. Allow all</label>
+            <label class="choice"><input type="radio" name="Q12" value="b"> B. Default deny</label>
+            <label class="choice"><input type="radio" name="Q12" value="c"> C. Random</label>
+            <label class="choice"><input type="radio" name="Q12" value="d"> D. Prompt user</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> No allow rules means default deny. / allow ルールが無い場合はデフォルト deny です。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q13" data-type="mc" data-answer="a">
+        <header><h4>Q13: Correct UDP forwarding path? / UDP 転送の正しい経路は？</h4><span class="type">Multiple Choice</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="radio" name="Q13" value="a"> A. App → CLI → GW → Target → GW → CLI → App</label>
+            <label class="choice"><input type="radio" name="Q13" value="b"> B. App → GW → CLI → Target → App</label>
+            <label class="choice"><input type="radio" name="Q13" value="c"> C. CLI → App → GW → Target</label>
+            <label class="choice"><input type="radio" name="Q13" value="d"> D. App → Target (direct)</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> The local app talks to the CLI, then gateway, then target, and returns back the same way. / CLI→GW→ターゲット→戻りの順です。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q14" data-type="ms" data-answer="a,c">
+        <header><h4>Q14: Select the CONNECT-UDP endpoints. / CONNECT-UDP のエンドポイントを選べ</h4><span class="type">Multi-Select</span></header>
+        <div class="body">
+          <fieldset class="choices">
+            <label class="choice"><input type="checkbox" name="Q14" value="a"> A. /.well-known/masque/udp/&lt;host&gt;/&lt;port&gt;/</label>
+            <label class="choice"><input type="checkbox" name="Q14" value="b"> B. /healthz</label>
+            <label class="choice"><input type="checkbox" name="Q14" value="c"> C. /.well-known/masque/udp-forward/&lt;host&gt;/&lt;port&gt;/</label>
+            <label class="choice"><input type="checkbox" name="Q14" value="d"> D. /metrics</label>
+          </fieldset>
+          <div class="explain"><strong>Explanation:</strong> Echo uses `/udp/` and forwarding uses `/udp-forward/`. / `udp` は echo、`udp-forward` は転送です。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q15" data-type="text" data-answer="^server_name$" data-eval="regex">
+        <header><h4>Q15: TLS SNI config key is? / TLS SNI のキーは？</h4><span class="type">Short Text</span></header>
+        <div class="body">
+          <input type="text" name="Q15" aria-label="Q15 input" placeholder="Type answer / 入力">
+          <div class="explain"><strong>Explanation:</strong> The key is `server_name`. / `server_name` が TLS SNI です。</div>
+        </div>
+      </article>
+
+      <article class="q card" data-id="Q16" data-type="text" data-answer="^toppy audit verify( .*)?$" data-eval="regex">
+        <header><h4>Q16: Command to verify audit log? / 監査ログ検証コマンドは？</h4><span class="type">Short Text</span></header>
+        <div class="body">
+          <input type="text" name="Q16" aria-label="Q16 input" placeholder="Type answer / 入力">
+          <div class="explain"><strong>Explanation:</strong> Use `toppy audit verify` (with optional args). / `toppy audit verify` を使います。</div>
+        </div>
+      </article>
+    </section>
+
+    <div class="card panel" id="bottom-actions">
+      <div class="row" style="justify-content:flex-end">
+        <button class="btn success" id="bottomShowAnswers" data-results-target="results-bottom">Show Answers & Score</button>
+      </div>
+      <div class="results card" id="results-bottom" aria-live="polite" style="display:none"></div>
+    </div>
+
+    <footer class="muted" style="margin-top:24px">
+      <p>This drill helps elevate <strong id="footer-skill">Your Skill Name</strong> to “<em id="footer-goal">Describe the learning goal</em>”.</p>
+      <p style="margin:.4rem 0 0"><span id="footer-brand"></span> <span id="copyright"></span></p>
+    </footer>
+  </div>
+
+  <script>
+  (function(){
+    const $=(s,r=document)=>r.querySelector(s); const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+    const ESCAPE_MAP={"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"};
+    const escapeHtml=str=>(str??'').replace(/[&<>"']/g,ch=>ESCAPE_MAP[ch]||ch);
+    const locale=(document.documentElement.lang||'').toLowerCase();
+    const DETAIL_TEXT=locale.startsWith('ja')?
+      { detailHeading:'詳細リスト', detailDescription:'各設問の回答・正解・スコア・解説をまとめています。', columns:{question:'設問',response:'回答',correct:'正解',score:'スコア',explanation:'解説'}, status:{correct:'正解',incorrect:'不正解',unanswered:'未回答'}, noAnswer:'未回答', notAvailable:'N/A', none:'なし' }:
+      { detailHeading:'Detailed Breakdown', detailDescription:'Responses, correct answers, scores, and explanations for every question.', columns:{question:'Question',response:'Your Answer',correct:'Correct Answer',score:'Result',explanation:'Explanation'}, status:{correct:'Correct',incorrect:'Incorrect',unanswered:'Unanswered'}, noAnswer:'Not answered', notAvailable:'N/A', none:'None' };
+    const THEME_KEY='quizTheme'; const prefersDark=window.matchMedia('(prefers-color-scheme: dark)');
+    function updateThemeToggle(mode){const b=$('#themeToggle'); if(!b) return; const L=mode==='light'; b.textContent=L?'🌙 Dark':'🌞 Light'; b.setAttribute('aria-pressed',L?'true':'false');}
+    function setTheme(m,persist=true){const n=m==='light'?'light':'dark'; document.body.setAttribute('data-theme',n); if(persist){try{localStorage.setItem(THEME_KEY,n);}catch(e){}} updateThemeToggle(n);}    
+    function applyInitialTheme(){let s=null; try{s=localStorage.getItem(THEME_KEY);}catch(e){} const init=s||(prefersDark.matches?'dark':'light'); setTheme(init,false);}    
+    function toggleTheme(){const c=document.body.getAttribute('data-theme')==='light'?'light':'dark'; setTheme(c==='light'?'dark':'light',true);}    
+    function applySettings(){const S=window.DRILL_SETTINGS||{}; const name=S.SKILL_NAME; const sub=S.SKILL_SUBTITLE; const goal=S.GOAL_DESCRIPTION; $('#title').textContent=(name?name+' ':'')+(sub?('— '+sub):''); $('#subtitle').textContent=goal||''; $('#footer-skill').textContent=name||'Skill'; $('#footer-goal').textContent=goal||''; const img=$('#brand-logo'); if(img&&S.BRAND_LOGO){img.src=S.BRAND_LOGO; img.style.display='inline-block'; img.alt=S.BRAND_NAME||'';} $('#brand-name').textContent=S.BRAND_NAME||''; $('#brand-link').href=S.BRAND_URL||'/'; $('#footer-brand').innerHTML='<strong>'+(S.BRAND_NAME||'')+'</strong>';}    
+    function showExplain(q,show=true){const exp=q.querySelector('.explain'); if(!exp) return; exp.classList.toggle('show',!!show);}    
+
+    function isAnswered(q){const t=q.dataset.type; if(t==='mc') return !!q.querySelector('input[type=radio]:checked'); if(t==='ms') return q.querySelectorAll('input[type=checkbox]:checked').length>0; if(t==='text'){const v=q.querySelector('input[type=text]')?.value.trim(); return !!v;} return false;}
+
+    function cleanLabelText(text){ return (text||'').replace(/\s+/g,' ').trim(); }
+    function describeChoiceList(q,values){ if(!values||!values.length) return ''; const map=v=>{const input=q.querySelector('input[value="'+CSS.escape(v)+'"]'); const label=input?.closest('label'); return label?cleanLabelText(label.textContent):v; }; return values.map(map).join(', '); }
+    function describeChoiceLabel(q,value){ return describeChoiceList(q,[value]); }
+
+    function evaluateQuestion(q){const id=q.dataset.id; const type=q.dataset.type; const ans=(q.dataset.answer||'').trim(); let ok=null,user=null; if(type==='mc'){const p=q.querySelector('input[type=radio]:checked'); if(!p){ok=null;} else {user=p.value; ok=(user===ans);} } else if(type==='ms'){const picked=q.querySelectorAll('input[type=checkbox]:checked'); user=Array.from(picked).map(i=>i.value).sort(); if(!user.length){ok=null;} else {const gold=ans.split(',').map(s=>s.trim()).sort(); ok=JSON.stringify(user)===JSON.stringify(gold);} } else if(type==='text'){const t=q.querySelector('input[type=text]'); user=(t?.value||'').trim(); const mode=(q.dataset.eval||'exact').toLowerCase(); if(!user){ok=null;} else if(mode==='regex'){try{ok=new RegExp(ans,'i').test(user);}catch(e){ok=false;}} else {ok=(user===ans);} } return {id,type,ok,user};}
+
+    function formatUserAnswerDisplay(q,evaluation){ const type=q.dataset.type; if(type==='mc'){return evaluation.user?describeChoiceLabel(q,evaluation.user):'';} if(type==='ms'){const vals=Array.isArray(evaluation.user)?evaluation.user:[]; return vals.length?describeChoiceList(q,vals):'';} if(type==='text'){return evaluation.user||'';} return '';
+    }
+    function formatCorrectAnswerDisplay(q){ const type=q.dataset.type; const ans=(q.dataset.answer||'').trim(); if(!ans) return ''; if(type==='mc') return describeChoiceLabel(q,ans); if(type==='ms'){const vals=ans.split(',').map(s=>s.trim()).filter(Boolean); return vals.length?describeChoiceList(q,vals):'';} if(type==='text'){const mode=(q.dataset.eval||'exact').toLowerCase(); return mode==='regex' ? 'Regex: '+ans : ans;} return ans; }
+
+    function scoreLabel(ok){ if(ok===true) return DETAIL_TEXT.status.correct; if(ok===false) return DETAIL_TEXT.status.incorrect; return DETAIL_TEXT.status.unanswered; }
+
+    function computeLiveScore(){const qs=$$('#questions .q'); let total=0,correct=0,answered=0; qs.forEach(q=>{total++; const r=evaluateQuestion(q); if(r.ok===true) correct++; if(isAnswered(q)) answered++;}); return {total,correct,answered};}
+    function updateLiveScore(){const s=computeLiveScore(); const el=$('#score-badge'); if(el){ el.textContent=s.correct+' / '+s.total; el.title='Correct '+s.correct+' of '+s.total; }}
+
+    function resolveResultsBox(targetId){ if(targetId){ const el=document.getElementById(targetId); if(el) return el; } return document.getElementById('results-bottom') || document.querySelector('.results'); }
+
+    function showAnswersAndScore(targetId){
+      let total=0,correct=0,answered=0; const rows=[];
+      $$('#questions .q').forEach(q=>{
+        total++; const result=evaluateQuestion(q); if(isAnswered(q)) answered++; if(result.ok===true) correct++;
+        showExplain(q,true);
+        const qTitle=q.querySelector('h4')?.textContent.trim()||result.id;
+        const expHtml=q.querySelector('.explain')?.innerHTML.trim()||'';
+        const status=scoreLabel(result.ok);
+        const correctDisp=formatCorrectAnswerDisplay(q);
+        const userDisp=formatUserAnswerDisplay(q,result)||DETAIL_TEXT.noAnswer;
+        rows.push('<tr>'+
+          '<td><div><strong>'+escapeHtml(result.id)+'</strong></div><div>'+escapeHtml(qTitle)+'</div></td>'+
+          '<td>'+escapeHtml(userDisp)+'</td>'+
+          '<td>'+escapeHtml(correctDisp||DETAIL_TEXT.notAvailable)+'</td>'+
+          '<td>'+escapeHtml(status)+'</td>'+
+          '<td>'+(expHtml||'')+'</td>'+
+        '</tr>');
+      });
+      const box=resolveResultsBox(targetId);
+      if(box){
+        const scoreHeading=locale.startsWith('ja')?'スコア':'Score';
+        const summaryLabel=locale.startsWith('ja')
+          ? '正解: <strong>'+correct+'</strong> / '+total+' (回答: '+answered+')'
+          : 'Correct: <strong>'+correct+'</strong> / '+total+' (answered: '+answered+')';
+        const tableHTML='<div class="table-wrapper"><table><thead><tr>'+
+          '<th>'+DETAIL_TEXT.columns.question+'</th>'+
+          '<th>'+DETAIL_TEXT.columns.response+'</th>'+
+          '<th>'+DETAIL_TEXT.columns.correct+'</th>'+
+          '<th>'+DETAIL_TEXT.columns.score+'</th>'+
+          '<th>'+DETAIL_TEXT.columns.explanation+'</th>'+
+        '</tr></thead><tbody>'+rows.join('')+'</tbody></table></div>';
+        box.innerHTML='<h4 style="margin:0 0 8px">'+scoreHeading+'</h4><p>'+summaryLabel+'</p>'+tableHTML;
+        box.style.display='block';
+      }
+    }
+
+    // Handlers
+    $('#themeToggle')?.addEventListener('click',()=>{toggleTheme(); updateLiveScore();});
+    $('#mode-badge').addEventListener('click',()=>{let lm=$('#learningMode'); if(!lm){ lm=document.createElement('input'); lm.type='checkbox'; lm.id='learningMode'; lm.checked=true; lm.style.display='none'; document.body.appendChild(lm);} lm.checked=!lm.checked; const mb=$('#mode-badge'); mb.textContent=lm.checked?'Learning Mode':'Test Mode'; mb.setAttribute('aria-pressed',lm.checked?'true':'false'); updateLiveScore();});
+    const bottomBtn=$('#bottomShowAnswers');
+    if(bottomBtn){ bottomBtn.addEventListener('click',()=>{ showAnswersAndScore(bottomBtn.dataset.resultsTarget); }); }
+
+    applyInitialTheme();
+    try{ if(!localStorage.getItem('quizTheme')){ setTheme(prefersDark.matches?'dark':'light',false);} }catch(_){ }
+    applySettings();
+    if(!$('#learningMode')){ const lm=document.createElement('input'); lm.type='checkbox'; lm.id='learningMode'; lm.checked=true; lm.style.display='none'; document.body.appendChild(lm);} 
+    const mb=$('#mode-badge'); if(mb){ mb.textContent='Learning Mode'; mb.setAttribute('aria-pressed','true'); }
+    updateLiveScore();
+    const y=new Date().getFullYear(); const b=window.DRILL_SETTINGS?.BRAND_NAME||'ToppyMicroServices'; const c=$('#copyright'); if(c){ c.textContent='© '+y+' '+b+'. All rights reserved.'; }
+  })();
+  </script>
+</body>
+</html>
