@@ -88,6 +88,100 @@ See `spec.md` for a usage-oriented spec, and `TODO.md` / `bd` for backlog tracki
 - `toppy udp` is a local UDP proxy guarded by the configured policy. It forwards UDP payloads over CONNECT-UDP (HTTP/3 Extended CONNECT + HTTP Datagrams).
 - `toppy audit verify` verifies the local tamper-evident JSONL audit log hash chain.
 
+## Mermaid diagrams
+
+### Components + dataflow
+
+```mermaid
+flowchart LR
+  %% --------- Layout groups ----------
+  subgraph LOCAL["Local machine"]
+    APP["UDP App\n(client)"]
+    CLI["toppy-cli\n(command: udp / doctor / up)"]
+    CFG["config.toml\n(gateway/port/SNI/CA/token/policy)"]
+    POL["Policy check\n(default deny)"]
+    UDPLOCAL["Local UDP socket\n(e.g., 127.0.0.1:19000)"]
+  end
+
+  subgraph DOCKER["Docker network (dev)"]
+    GW["toppy-gw\n:4433/udp (QUIC/H3)\n:8080/tcp (healthz)"]
+    ECHO["udp-echo\n:9999/udp"]
+  end
+
+  subgraph TARGET["Target network"]
+    REAL["Any UDP server\n(DoQ, games, etc.)"]
+  end
+
+  %% --------- Local wiring ----------
+  APP <--> UDPLOCAL
+  UDPLOCAL <--> CLI
+  CFG --> CLI
+  CLI --> POL
+
+  %% --------- Paths ----------
+  %% UDP forwarding path
+  POL -->|allow| CLI
+  CLI -->|QUIC + HTTP/3\nExtended CONNECT| GW
+  CLI -->|CONNECT-UDP request\nAuthorization: Bearer <token>\nTLS: SNI=server_name, CA=ca_cert_path| GW
+
+  CLI -->|HTTP Datagrams\ncontext_id=0, payload=UDP| GW
+  GW -->|UDP to target| ECHO
+  ECHO -->|UDP response| GW
+  GW -->|HTTP Datagrams\ncontext_id=0, payload=UDP| CLI
+  CLI -->|UDP response| UDPLOCAL
+  UDPLOCAL --> APP
+
+  %% Doctor echo path (diagnostics)
+  CLI -.->|doctor only:\nCONNECT-UDP to echo endpoint| GW
+  CLI -.->|URI: /.well-known/masque/udp/<host>/<port>/\nDatagram echo| GW
+
+  %% Forward endpoint path
+  CLI -->|URI: /.well-known/masque/udp-forward/<host>/<port>/\nUDP forwarding| GW
+
+  %% Optional: other target
+  GW -.->|UDP to real target| REAL
+
+  %% --------- Notes ----------
+  POL -.-|deny -> fail fast with reason| CLI
+  CLI -.-|up: local TCP forwarder\n(not MASQUE)| CLI
+```
+
+### UDP proxy sequence (multi-client)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant User
+  participant App as Local UDP App
+  participant CLI as toppy-cli
+  participant GW as toppy-gw
+  participant U as UDP target
+
+  User->>CLI: Start `toppy udp --listen 127.0.0.1:19000 --target <host>:<port>`
+  CLI->>CLI: Load config.toml (gateway/port/SNI/CA/token/policy)
+  CLI->>CLI: Policy evaluate target (default deny)
+  alt Policy denied
+    CLI-->>User: Exit with clear deny reason
+  else Policy allowed
+    CLI->>GW: QUIC connect to :4433/udp\nALPN=h3, TLS verify (CA), SNI=server_name
+    Note over CLI,GW: One HTTP/3 connection is shared.
+
+    loop Per local UDP peer
+      App->>CLI: UDP datagram from peer A
+      CLI->>GW: CONNECT-UDP (new request stream)\nURI=/.well-known/masque/udp-forward/<host>/<port>/\nAuthorization: Bearer <token>
+      GW-->>CLI: 200 OK
+      CLI->>GW: HTTP Datagram on stream A (context_id=0)
+      GW->>U: UDP send
+      U-->>GW: UDP response
+      GW-->>CLI: HTTP Datagram on stream A (context_id=0)
+      CLI-->>App: UDP response back to peer A
+    end
+
+    Note over CLI: Reply routing uses stream id -> peer mapping (no "last sender").
+    Note over CLI,GW: doctor uses echo endpoint:\n/.well-known/masque/udp/<host>/<port>/ (datagram echo)
+  end
+```
+
 ## Dev setup
 
 If you don't have Rust installed yet, run:

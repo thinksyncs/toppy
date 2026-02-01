@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::collections::HashMap;
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::thread;
@@ -12,6 +13,7 @@ use toppy_core::policy::{Decision, Policy, Target};
 
 use bytes::Bytes;
 use h3::ext::Protocol;
+use h3::quic::StreamId;
 use h3_datagram::datagram_handler::HandleDatagramsExt;
 use quinn::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
@@ -697,42 +699,6 @@ fn main() {
                     .await
                     .map_err(|e| format!("h3 client init failed: {e:?}"))?;
 
-                let uri: http::Uri = format!(
-                    "https://{}/.well-known/masque/udp-forward/{}/{}/",
-                    host,
-                    target_addr.ip(),
-                    target_addr.port()
-                )
-                .parse()
-                .map_err(|e| format!("invalid uri: {e}"))?;
-
-                let mut req = http::Request::builder()
-                    .method(http::Method::CONNECT)
-                    .uri(uri)
-                    .header("authorization", format!("Bearer {}", auth_token))
-                    .body(())
-                    .map_err(|e| format!("request build failed: {e}"))?;
-                req.extensions_mut().insert(Protocol::CONNECT_UDP);
-
-                let mut stream =
-                    tokio::time::timeout(Duration::from_millis(1500), sender.send_request(req))
-                        .await
-                        .map_err(|_| "h3 send_request timed out".to_string())?
-                        .map_err(|e| format!("h3 send_request failed: {e:?}"))?;
-
-                let resp =
-                    tokio::time::timeout(Duration::from_millis(1500), stream.recv_response())
-                        .await
-                        .map_err(|_| "h3 recv_response timed out".to_string())?
-                        .map_err(|e| format!("h3 recv_response failed: {e:?}"))?;
-                if resp.status() != http::StatusCode::OK {
-                    let _ = stream.finish().await;
-                    let _ = h3_conn.shutdown(0).await;
-                    let _ = h3_conn.wait_idle().await;
-                    endpoint.wait_idle().await;
-                    return Err(format!("connect-udp unexpected status: {}", resp.status()));
-                }
-
                 let udp = tokio::net::UdpSocket::bind(listen_addr)
                     .await
                     .map_err(|e| format!("udp bind {} failed: {}", listen_addr, e))?;
@@ -747,51 +713,95 @@ fn main() {
                     Some(format!("listening={}", local_addr)),
                 );
 
-                let stream_id = stream.id();
-                let mut dg_sender = h3_conn.get_datagram_sender(stream_id);
+                // Multi-client mapping: we keep one CONNECT-UDP request stream per local UDP peer.
+                // This allows correct reply routing without relying on a single "last sender".
+                let mut peer_to_stream: HashMap<SocketAddr, StreamId> = HashMap::new();
+                let mut stream_to_peer: HashMap<StreamId, SocketAddr> = HashMap::new();
+                let mut stream_keepalive: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
+
                 let mut dg_reader = h3_conn.get_datagram_reader();
                 let mut buf = vec![0u8; 2048];
-                let mut last_peer: Option<SocketAddr> = None;
 
                 loop {
                     tokio::select! {
                         recv = udp.recv_from(&mut buf) => {
                             let (n, peer) = recv.map_err(|e| format!("udp recv failed: {}", e))?;
-                            last_peer = Some(peer);
+                            let stream_id = match peer_to_stream.get(&peer).copied() {
+                                Some(id) => id,
+                                None => {
+                                    let uri: http::Uri = format!(
+                                        "https://{}/.well-known/masque/udp-forward/{}/{}/",
+                                        host,
+                                        target_addr.ip(),
+                                        target_addr.port()
+                                    )
+                                    .parse()
+                                    .map_err(|e| format!("invalid uri: {e}"))?;
+
+                                    let mut req = http::Request::builder()
+                                        .method(http::Method::CONNECT)
+                                        .uri(uri)
+                                        .header("authorization", format!("Bearer {}", auth_token))
+                                        .body(())
+                                        .map_err(|e| format!("request build failed: {e}"))?;
+                                    req.extensions_mut().insert(Protocol::CONNECT_UDP);
+
+                                    let mut stream = tokio::time::timeout(
+                                        Duration::from_millis(1500),
+                                        sender.send_request(req),
+                                    )
+                                    .await
+                                    .map_err(|_| "h3 send_request timed out".to_string())?
+                                    .map_err(|e| format!("h3 send_request failed: {e:?}"))?;
+
+                                    let resp = tokio::time::timeout(
+                                        Duration::from_millis(1500),
+                                        stream.recv_response(),
+                                    )
+                                    .await
+                                    .map_err(|_| "h3 recv_response timed out".to_string())?
+                                    .map_err(|e| format!("h3 recv_response failed: {e:?}"))?;
+                                    if resp.status() != http::StatusCode::OK {
+                                        let _ = stream.finish().await;
+                                        return Err(format!(
+                                            "connect-udp unexpected status: {}",
+                                            resp.status()
+                                        ));
+                                    }
+
+                                    let stream_id: StreamId = stream.id();
+                                    peer_to_stream.insert(peer, stream_id);
+                                    stream_to_peer.insert(stream_id, peer);
+                                    stream_keepalive.push(Box::new(stream));
+                                    stream_id
+                                }
+                            };
                             let dg = HttpDatagram::new(CONNECT_UDP_CONTEXT_ID, &buf[..n])
                                 .encode()
                                 .map_err(|_| "encode http datagram failed".to_string())?;
+                            let mut dg_sender = h3_conn.get_datagram_sender(stream_id);
                             dg_sender
                                 .send_datagram(Bytes::from(dg))
                                 .map_err(|e| format!("h3 send datagram failed: {e}"))?;
                         }
                         dg = dg_reader.read_datagram() => {
                             let dg = dg.map_err(|e| format!("h3 recv datagram failed: {e:?}"))?;
-                            if dg.stream_id() != stream_id {
-                                continue;
-                            }
+                            let dg_stream_id: StreamId = dg.stream_id();
                             let payload = dg.into_payload();
                             let decoded = HttpDatagram::decode(payload.as_ref())
                                 .map_err(|_| "invalid http datagram".to_string())?;
                             if decoded.context_id != CONNECT_UDP_CONTEXT_ID {
                                 continue;
                             }
-                            if let Some(peer) = last_peer {
+                            if let Some(peer) = stream_to_peer.get(&dg_stream_id).copied() {
                                 let _ = udp.send_to(decoded.payload.as_slice(), peer).await;
                             }
                         }
-                        chunk = stream.recv_data() => {
-                            match chunk.map_err(|e| format!("h3 recv data failed: {e:?}"))? {
-                                Some(_chunk) => {
-                                    // CONNECT-UDP payload is carried in HTTP Datagrams, not stream data.
-                                }
-                                None => break,
-                            }
+                        _ = tokio::signal::ctrl_c() => {
+                            break;
                         }
                     }
                 }
-
-                let _ = stream.finish().await;
                 let _ = h3_conn.shutdown(0).await;
                 let _ = h3_conn.wait_idle().await;
                 endpoint.wait_idle().await;
