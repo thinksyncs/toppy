@@ -14,6 +14,7 @@ The project is organized as a Cargo workspace with multiple crates:
 - `toppy-gw`: A lightweight QUIC + HTTP/3 gateway (QUIC ping + CONNECT-UDP echo/forward).
 - `toppy-core`: Shared functionality, including configuration management, policy enforcement, and logging.
 - `toppy-proto`: Definitions of the custom capsule/command messages used between client and gateway.
+- `education`: Educational materials and quizzes (deployed to [GitHub Pages](https://thinksyncs.github.io/toppy/)).
 
 See `spec.md` for a usage-oriented spec, and `TODO.md` / `bd` for backlog tracking.
 
