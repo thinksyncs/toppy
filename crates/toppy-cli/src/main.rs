@@ -996,6 +996,7 @@ fn main() {
 
                 // Multi-client mapping: we keep one CONNECT-UDP request stream per local UDP peer.
                 // This allows correct reply routing without relying on a single "last sender".
+                // TODO(toppy-viw): apply rate limiting to CONNECT-UDP datagrams (ingress/egress).
                 let mut peer_to_stream: HashMap<SocketAddr, StreamId> = HashMap::new();
                 let mut stream_to_peer: HashMap<StreamId, SocketAddr> = HashMap::new();
                 let mut stream_keepalive: Vec<Box<dyn std::any::Any + Send>> = Vec::new();

@@ -312,6 +312,7 @@ Design note: see [docs/auth-design.md](docs/auth-design.md).
 ## Session rate limiting (`toppy up`)
 
 The `toppy up` TCP forwarder applies a per-connection token-bucket rate limit to session traffic.
+Current scope: **TCP forwarder only** (CONNECT-UDP and other MASQUE tunnels are not rate-limited yet).
 
 Defaults (when `[rate]` is omitted): **10 MiB/s** with a **10 MiB burst** (per direction).
 

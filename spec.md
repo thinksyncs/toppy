@@ -81,6 +81,7 @@ Toppy は Rust 製の CLI + ゲートウェイのワークスペースです。
 ### 3.3 レート制限（toppy up）
 
 `toppy up` の TCP 転送は 1 コネクションあたり token-bucket を適用します。
+現状の対象は **TCP forwarder のみ** で、CONNECT-UDP/MASQUE には未適用です。
 
 ```toml
 [rate]
@@ -95,6 +96,9 @@ burst_bytes = 10485760
 bytes_per_sec = 0
 burst_bytes = 0
 ```
+
+TODO:
+- CONNECT-UDP の datagram 入出力に同様の rate limit を適用する。
 
 ### 3.4 監査ログの署名と送信
 
