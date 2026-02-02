@@ -22,6 +22,16 @@ pub enum ClientAuthConfig {
         token_cache_path: Option<String>,
     },
 
+    /// OIDC authorization-code flow with PKCE (browser-based).
+    OidcAuthCodePkce {
+        issuer: String,
+        client_id: String,
+        audience: Option<String>,
+        scope: Option<String>,
+        redirect_uri: String,
+        token_cache_path: Option<String>,
+    },
+
     /// SAML login flow via broker/federation.
     Saml {
         idp_entity_id: String,
@@ -69,6 +79,10 @@ pub struct Config {
     pub auth: Option<ClientAuthConfig>,
     pub mtu: Option<u16>,
     pub audit_log_path: Option<String>,
+    pub audit_signing_key: Option<String>,
+    pub audit_ship_url: Option<String>,
+    pub audit_ship_token: Option<String>,
+    pub audit_ship_timeout_secs: Option<u64>,
     pub policy: Option<PolicyConfig>,
     pub rate: Option<RateLimitConfig>,
 }
@@ -90,6 +104,13 @@ impl Config {
                     .oidc_device_code_config()?
                     .ok_or_else(|| "missing oidc config".to_string())?;
                 let token = oidc::resolve_cached_access_token(&cfg)?;
+                Ok(Some(token))
+            }
+            Some(ClientAuthConfig::OidcAuthCodePkce { .. }) => {
+                let cfg = self
+                    .oidc_auth_code_config()?
+                    .ok_or_else(|| "missing oidc auth-code config".to_string())?;
+                let token = oidc::resolve_cached_access_token_auth_code(&cfg)?;
                 Ok(Some(token))
             }
             Some(ClientAuthConfig::Saml { .. }) => {
@@ -129,6 +150,27 @@ impl Config {
                 client_id: broker_client_id.clone(),
                 audience: broker_audience.clone(),
                 scope: broker_scope.clone(),
+                token_cache_path: token_cache_path.clone(),
+            })),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn oidc_auth_code_config(&self) -> Result<Option<oidc::OidcAuthCodeConfig>, String> {
+        match &self.auth {
+            Some(ClientAuthConfig::OidcAuthCodePkce {
+                issuer,
+                client_id,
+                audience,
+                scope,
+                redirect_uri,
+                token_cache_path,
+            }) => Ok(Some(oidc::OidcAuthCodeConfig {
+                issuer: issuer.clone(),
+                client_id: client_id.clone(),
+                audience: audience.clone(),
+                scope: scope.clone(),
+                redirect_uri: redirect_uri.clone(),
                 token_cache_path: token_cache_path.clone(),
             })),
             _ => Ok(None),
@@ -212,6 +254,28 @@ impl Config {
                         }
                     }
                 }
+                ClientAuthConfig::OidcAuthCodePkce {
+                    issuer,
+                    client_id,
+                    redirect_uri,
+                    token_cache_path,
+                    ..
+                } => {
+                    if issuer.trim().is_empty() {
+                        return Err("auth.issuer must not be empty".to_string());
+                    }
+                    if client_id.trim().is_empty() {
+                        return Err("auth.client_id must not be empty".to_string());
+                    }
+                    if redirect_uri.trim().is_empty() {
+                        return Err("auth.redirect_uri must not be empty".to_string());
+                    }
+                    if let Some(path) = token_cache_path {
+                        if path.trim().is_empty() {
+                            return Err("auth.token_cache_path must not be empty".to_string());
+                        }
+                    }
+                }
                 ClientAuthConfig::Saml {
                     idp_entity_id,
                     broker_issuer,
@@ -244,6 +308,21 @@ impl Config {
         if let Some(path) = &self.audit_log_path {
             if path.trim().is_empty() {
                 return Err("audit_log_path must not be empty".to_string());
+            }
+        }
+        if let Some(key) = &self.audit_signing_key {
+            if key.trim().is_empty() {
+                return Err("audit_signing_key must not be empty".to_string());
+            }
+        }
+        if let Some(url) = &self.audit_ship_url {
+            if url.trim().is_empty() {
+                return Err("audit_ship_url must not be empty".to_string());
+            }
+        }
+        if let Some(token) = &self.audit_ship_token {
+            if token.trim().is_empty() {
+                return Err("audit_ship_token must not be empty".to_string());
             }
         }
         if let Some(policy) = &self.policy {
@@ -327,6 +406,10 @@ mod tests {
             auth: None,
             mtu: None,
             audit_log_path: None,
+            audit_signing_key: None,
+            audit_ship_url: None,
+            audit_ship_token: None,
+            audit_ship_timeout_secs: None,
             policy: None,
             rate: None,
         };
@@ -344,6 +427,10 @@ mod tests {
             auth: None,
             mtu: None,
             audit_log_path: None,
+            audit_signing_key: None,
+            audit_ship_url: None,
+            audit_ship_token: None,
+            audit_ship_timeout_secs: None,
             policy: None,
             rate: None,
         };
@@ -386,6 +473,10 @@ mod tests {
             auth: None,
             mtu: None,
             audit_log_path: Some(" ".to_string()),
+            audit_signing_key: None,
+            audit_ship_url: None,
+            audit_ship_token: None,
+            audit_ship_timeout_secs: None,
             policy: None,
             rate: None,
         };
@@ -441,6 +532,10 @@ burst_bytes = 5678
             auth: None,
             mtu: None,
             audit_log_path: None,
+            audit_signing_key: None,
+            audit_ship_url: None,
+            audit_ship_token: None,
+            audit_ship_timeout_secs: None,
             policy: None,
             rate: Some(RateLimitConfig {
                 bytes_per_sec: Some(0),
@@ -533,6 +628,51 @@ token_cache_path = "/tmp/toppy-oidc-cache.json"
     }
 
     #[test]
+    fn load_config_reads_oidc_auth_code_mode() {
+        let _guard = crate::test_support::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let path = unique_temp_path("config-auth-oidc-auth-code");
+        let data = r#"
+gateway = "127.0.0.1"
+port = 4433
+
+[auth]
+mode = "oidc_auth_code_pkce"
+issuer = "https://issuer.example"
+client_id = "client-123"
+audience = "toppy"
+scope = "openid"
+redirect_uri = "http://127.0.0.1:8080/callback"
+token_cache_path = "/tmp/toppy-oidc-auth-code-cache.json"
+"#;
+        fs::write(&path, data).expect("write config");
+
+        let prev = env::var("TOPPY_CONFIG").ok();
+        env::set_var("TOPPY_CONFIG", &path);
+
+        let (cfg, _) = load_config().expect("load config");
+        assert_eq!(
+            cfg.auth,
+            Some(ClientAuthConfig::OidcAuthCodePkce {
+                issuer: "https://issuer.example".to_string(),
+                client_id: "client-123".to_string(),
+                audience: Some("toppy".to_string()),
+                scope: Some("openid".to_string()),
+                redirect_uri: "http://127.0.0.1:8080/callback".to_string(),
+                token_cache_path: Some("/tmp/toppy-oidc-auth-code-cache.json".to_string()),
+            })
+        );
+
+        if let Some(value) = prev {
+            env::set_var("TOPPY_CONFIG", value);
+        } else {
+            env::remove_var("TOPPY_CONFIG");
+        }
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
     fn load_config_reads_saml_broker_mode() {
         let _guard = crate::test_support::ENV_LOCK
             .lock()
@@ -590,6 +730,10 @@ token_cache_path = "/tmp/toppy-saml-cache.json"
             auth: Some(ClientAuthConfig::Token { token: None }),
             mtu: None,
             audit_log_path: None,
+            audit_signing_key: None,
+            audit_ship_url: None,
+            audit_ship_token: None,
+            audit_ship_timeout_secs: None,
             policy: None,
             rate: None,
         };
@@ -621,6 +765,10 @@ token_cache_path = "/tmp/toppy-saml-cache.json"
             }),
             mtu: None,
             audit_log_path: None,
+            audit_signing_key: None,
+            audit_ship_url: None,
+            audit_ship_token: None,
+            audit_ship_timeout_secs: None,
             policy: None,
             rate: None,
         };

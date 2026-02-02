@@ -64,6 +64,19 @@ See `spec.md` for a usage-oriented spec, and `TODO.md` / `bd` for backlog tracki
        ```
        - Run `toppy login` to complete the device-code flow and cache a token.
        - `toppy doctor` uses the cached token and refreshes it if possible.
+    - OIDC auth-code + PKCE (browser-based):
+      ```toml
+      [auth]
+      mode = "oidc_auth_code_pkce"
+      issuer = "https://issuer.example"
+      client_id = "toppy-cli"
+      audience = "toppy"               # optional
+      scope = "openid offline_access"  # optional
+      redirect_uri = "http://127.0.0.1:8080/callback"
+      token_cache_path = "/path/to/oidc-auth-code-token.json" # optional
+      ```
+      - Run `toppy login` to complete the browser-based flow and cache a token.
+      - Ensure the redirect URI is registered with your IdP.
      - SAML via broker/federation:
        ```toml
        [auth]
@@ -254,7 +267,7 @@ In the JSON output, verify these checks are `pass`:
 ## Threat model (summary)
 
 - Short-lived credentials and default-deny policies to limit blast radius.
-- Audit logs for connection activity are recorded locally as tamper-evident JSONL.
+- Audit logs for connection activity are recorded locally as tamper-evident JSONL; optional HMAC signing and remote shipping improve tamper evidence but do not protect against a fully compromised client.
 - Out of scope for MVP: full L3 VPN, direct SAML integration, advanced UDP proxy features (multi-peer mapping, NAT behaviors, QoS).
 
 ## Audit logs
@@ -272,13 +285,29 @@ Verify the log:
 - `cargo run -p toppy-cli -- audit verify`
 - Or: `TOPPY_AUDIT_LOG=/path/to/audit.jsonl cargo run -p toppy-cli -- audit verify`
 
+Operational notes: see [docs/audit-ops.md](docs/audit-ops.md).
+
+Optional signing (tamper-evident across shipping boundaries):
+
+- Set `TOPPY_AUDIT_SIGNING_KEY` (or `audit_signing_key` in config) to HMAC-sign each entry.
+- Verify with `toppy audit verify --signing-key <key>` (or `TOPPY_AUDIT_SIGNING_KEY`).
+
+Optional remote shipping (best-effort HTTP POST per entry):
+
+- Configure `TOPPY_AUDIT_SHIP_URL` (or `audit_ship_url` in config).
+- Optional `TOPPY_AUDIT_SHIP_TOKEN` (Bearer token).
+- Optional `TOPPY_AUDIT_SHIP_TIMEOUT` in seconds (default 3).
+
 ## IdP expansion (Phase 3 decision)
 
 For the next milestone, Toppy treats MFA and FIDO2 as **IdP concerns**, not separate client modes:
 
 - Supported now: **static token/JWT** via `auth_token` (or `[auth] mode="token"`).
 - Supported now: **OIDC device-code flow** (MFA/FIDO2 happen at the IdP during login).
+- Supported now: **OIDC auth-code + PKCE** (browser-based, local redirect).
 - Supported via broker: **SAML** (recommended: SAML-to-OIDC broker / federation, or mint JWT out-of-band).
+
+Design note: see [docs/auth-design.md](docs/auth-design.md).
 
 ## Session rate limiting (`toppy up`)
 

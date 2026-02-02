@@ -1,15 +1,17 @@
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
 use toppy_core::audit::{
-    append_event, default_audit_log_path, now_unix_ms, verify_chain, AuditEvent,
+    append_event_signed, default_audit_log_path, now_unix_ms, ship_entry,
+    verify_chain_with_signing_key, AuditEvent, AuditShipConfig,
 };
 use toppy_core::config::{ClientAuthConfig, SessionRateLimit};
 use toppy_core::oidc;
 use toppy_core::policy::{Decision, Policy, Target};
+use url::Url;
 
 use bytes::Bytes;
 use h3::ext::Protocol;
@@ -21,7 +23,6 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
 use rustls::RootCertStore;
 use toppy_proto::masque::{HttpDatagram, CONNECT_UDP_CONTEXT_ID};
-
 mod rate_copy;
 
 /// Toppy command-line interface
@@ -84,6 +85,9 @@ enum AuditCommands {
         /// Path to the audit JSONL file
         #[arg(long)]
         path: Option<String>,
+        /// Signing key for verifying signed entries
+        #[arg(long)]
+        signing_key: Option<String>,
     },
 }
 
@@ -105,6 +109,83 @@ fn audit_log_path_from_env_or_config() -> Option<std::path::PathBuf> {
     None
 }
 
+fn audit_signing_key_from_env_or_config() -> Option<Vec<u8>> {
+    if let Ok(value) = std::env::var("TOPPY_AUDIT_SIGNING_KEY") {
+        let trimmed = value.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed.into_bytes());
+        }
+    }
+    if let Ok((cfg, _)) = toppy_core::config::load_config() {
+        if let Some(value) = cfg.audit_signing_key {
+            let trimmed = value.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed.into_bytes());
+            }
+        }
+    }
+    None
+}
+
+fn audit_ship_config_from_env_or_config() -> Option<AuditShipConfig> {
+    let env_url = std::env::var("TOPPY_AUDIT_SHIP_URL").ok();
+    let env_token = std::env::var("TOPPY_AUDIT_SHIP_TOKEN").ok();
+    let env_timeout = std::env::var("TOPPY_AUDIT_SHIP_TIMEOUT")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+
+    let mut url = env_url.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let mut token = env_token.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let mut timeout_secs = env_timeout;
+
+    if let Ok((cfg, _)) = toppy_core::config::load_config() {
+        if url.is_none() {
+            url = cfg.audit_ship_url.and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+        }
+        if token.is_none() {
+            token = cfg.audit_ship_token.and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+        }
+        if timeout_secs.is_none() {
+            timeout_secs = cfg.audit_ship_timeout_secs;
+        }
+    }
+
+    let url = url?;
+    Some(AuditShipConfig {
+        url,
+        token,
+        timeout_secs: timeout_secs.unwrap_or(3),
+    })
+}
+
 fn current_actor() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
@@ -120,8 +201,16 @@ fn try_audit_event(action: &str, target: &str, allowed: bool, reason: Option<Str
         allowed,
         reason,
     };
-    if let Err(err) = append_event(path, now_unix_ms(), event) {
-        eprintln!("audit log write failed: {}", err);
+    let signing_key = audit_signing_key_from_env_or_config();
+    match append_event_signed(path, now_unix_ms(), event, signing_key.as_deref()) {
+        Ok(entry) => {
+            if let Some(cfg) = audit_ship_config_from_env_or_config() {
+                if let Err(err) = ship_entry(&entry, &cfg) {
+                    eprintln!("audit ship failed: {}", err);
+                }
+            }
+        }
+        Err(err) => eprintln!("audit log write failed: {}", err),
     }
 }
 
@@ -129,6 +218,91 @@ fn parse_socket_addr(label: &str, value: &str) -> Result<SocketAddr, String> {
     value
         .parse::<SocketAddr>()
         .map_err(|e| format!("invalid {} {}: {}", label, value, e))
+}
+
+fn wait_for_auth_code(redirect_uri: &str, expected_state: &str) -> Result<String, String> {
+    let url = Url::parse(redirect_uri)
+        .map_err(|e| format!("invalid redirect_uri {}: {}", redirect_uri, e))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| "redirect_uri must include host".to_string())?;
+    let port = url.port().unwrap_or(80);
+    let path = url.path().to_string();
+    let listen = format!("{}:{}", host, port);
+    let listener = TcpListener::bind(&listen)
+        .map_err(|e| format!("failed to bind redirect listener {}: {}", listen, e))?;
+
+    for stream in listener.incoming() {
+        let mut stream = stream.map_err(|e| format!("redirect accept failed: {}", e))?;
+        let mut buffer = Vec::new();
+        let mut temp = [0u8; 1024];
+        loop {
+            let n = stream.read(&mut temp).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&temp[..n]);
+            if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+            if buffer.len() > 8192 {
+                break;
+            }
+        }
+
+        let request = String::from_utf8_lossy(&buffer);
+        let mut lines = request.lines();
+        let request_line = lines.next().unwrap_or("");
+        let mut parts = request_line.split_whitespace();
+        let _method = parts.next().unwrap_or("");
+        let uri = parts.next().unwrap_or("");
+
+        let full_url = format!("http://{}{}", listen, uri);
+        let parsed =
+            Url::parse(&full_url).map_err(|e| format!("invalid redirect request: {}", e))?;
+
+        if parsed.path() != path {
+            send_redirect_response(&mut stream, 404, "Not Found", "invalid path");
+            continue;
+        }
+
+        let mut code = None;
+        let mut state = None;
+        for (key, value) in parsed.query_pairs() {
+            match key.as_ref() {
+                "code" => code = Some(value.to_string()),
+                "state" => state = Some(value.to_string()),
+                _ => {}
+            }
+        }
+
+        if state.as_deref() != Some(expected_state) {
+            send_redirect_response(&mut stream, 400, "Bad Request", "state mismatch");
+            return Err("state mismatch in redirect".to_string());
+        }
+
+        let code = code.ok_or_else(|| "missing code in redirect".to_string())?;
+        send_redirect_response(
+            &mut stream,
+            200,
+            "OK",
+            "login complete; you can close this tab",
+        );
+        return Ok(code);
+    }
+
+    Err("redirect listener closed without receiving code".to_string())
+}
+
+fn send_redirect_response(stream: &mut TcpStream, status: u16, status_text: &str, body: &str) {
+    let response = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+        status,
+        status_text,
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(response.as_bytes());
 }
 
 fn load_ca_certs_pem(path: &std::path::Path) -> Result<RootCertStore, String> {
@@ -333,6 +507,113 @@ fn main() {
                         println!("auth: token cached at {}", cache_path.display());
                         audit_ok(format!(
                             "mode=oidc_device_code printed=false cache={}",
+                            cache_path.display()
+                        ));
+                    }
+                }
+                Some(ClientAuthConfig::OidcAuthCodePkce { .. }) => {
+                    let oidc_cfg = match cfg.oidc_auth_code_config() {
+                        Ok(Some(cfg)) => cfg,
+                        Ok(None) => {
+                            eprintln!("auth: OIDC auth-code config missing");
+                            audit_fail("mode=oidc_auth_code_pkce config missing".to_string());
+                            std::process::exit(3);
+                        }
+                        Err(err) => {
+                            eprintln!("auth: {}", err);
+                            audit_fail(format!("mode=oidc_auth_code_pkce config error: {}", err));
+                            std::process::exit(3);
+                        }
+                    };
+
+                    let provider = match oidc::discover_provider(&oidc_cfg.issuer) {
+                        Ok(provider) => provider,
+                        Err(err) => {
+                            eprintln!("auth: oidc discovery failed: {}", err);
+                            audit_fail(format!(
+                                "mode=oidc_auth_code_pkce discovery failed: {}",
+                                err
+                            ));
+                            std::process::exit(3);
+                        }
+                    };
+
+                    let (verifier, challenge) = match oidc::generate_pkce_pair() {
+                        Ok(pair) => pair,
+                        Err(err) => {
+                            eprintln!("auth: pkce generation failed: {}", err);
+                            audit_fail(format!("mode=oidc_auth_code_pkce pkce failed: {}", err));
+                            std::process::exit(3);
+                        }
+                    };
+                    let state = match oidc::generate_state() {
+                        Ok(state) => state,
+                        Err(err) => {
+                            eprintln!("auth: state generation failed: {}", err);
+                            audit_fail(format!("mode=oidc_auth_code_pkce state failed: {}", err));
+                            std::process::exit(3);
+                        }
+                    };
+                    let auth_url =
+                        match oidc::build_authorize_url(&provider, &oidc_cfg, &challenge, &state) {
+                            Ok(url) => url,
+                            Err(err) => {
+                                eprintln!("auth: build authorize url failed: {}", err);
+                                audit_fail(format!("mode=oidc_auth_code_pkce url failed: {}", err));
+                                std::process::exit(3);
+                            }
+                        };
+
+                    println!("auth: open this URL in a browser to continue login:");
+                    println!("auth: {}", auth_url);
+
+                    let code = match wait_for_auth_code(&oidc_cfg.redirect_uri, &state) {
+                        Ok(code) => code,
+                        Err(err) => {
+                            eprintln!("auth: redirect handling failed: {}", err);
+                            audit_fail(format!(
+                                "mode=oidc_auth_code_pkce redirect failed: {}",
+                                err
+                            ));
+                            std::process::exit(3);
+                        }
+                    };
+
+                    let token =
+                        match oidc::exchange_auth_code(&provider, &oidc_cfg, &code, &verifier) {
+                            Ok(token) => token,
+                            Err(err) => {
+                                eprintln!("auth: auth code exchange failed: {}", err);
+                                audit_fail(format!(
+                                    "mode=oidc_auth_code_pkce exchange failed: {}",
+                                    err
+                                ));
+                                std::process::exit(3);
+                            }
+                        };
+
+                    let cache_path = match oidc::save_token_cache_auth_code(&oidc_cfg, &token) {
+                        Ok(path) => path,
+                        Err(err) => {
+                            eprintln!("auth: failed to write token cache: {}", err);
+                            audit_fail(format!(
+                                "mode=oidc_auth_code_pkce cache write failed: {}",
+                                err
+                            ));
+                            std::process::exit(3);
+                        }
+                    };
+
+                    if print_token {
+                        println!("{}", token.access_token);
+                        audit_ok(format!(
+                            "mode=oidc_auth_code_pkce printed=true cache={}",
+                            cache_path.display()
+                        ));
+                    } else {
+                        println!("auth: token cached at {}", cache_path.display());
+                        audit_ok(format!(
+                            "mode=oidc_auth_code_pkce printed=false cache={}",
                             cache_path.display()
                         ));
                     }
@@ -815,12 +1096,15 @@ fn main() {
             }
         }
         Some(Commands::Audit { command }) => match command {
-            AuditCommands::Verify { path } => {
+            AuditCommands::Verify { path, signing_key } => {
                 let path = path
                     .map(std::path::PathBuf::from)
                     .or_else(audit_log_path_from_env_or_config)
                     .unwrap_or_else(default_audit_log_path);
-                match verify_chain(&path) {
+                let signing_key = signing_key
+                    .map(|value| value.into_bytes())
+                    .or_else(audit_signing_key_from_env_or_config);
+                match verify_chain_with_signing_key(&path, signing_key.as_deref()) {
                     Ok(()) => {
                         println!("audit ok: {}", path.display());
                         try_audit_event(

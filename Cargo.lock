@@ -1556,12 +1556,14 @@ dependencies = [
  "tokio",
  "toppy-core",
  "toppy-proto",
+ "url",
 ]
 
 [[package]]
 name = "toppy-core"
 version = "0.0.1"
 dependencies = [
+ "base64",
  "bytes",
  "h3",
  "h3-datagram",
@@ -1578,6 +1580,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml",
+ "url",
  "wintun",
 ]
 

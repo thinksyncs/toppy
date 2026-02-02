@@ -45,6 +45,10 @@ Toppy は Rust 製の CLI + ゲートウェイのワークスペースです。
 - `ca_cert_path` : TLS ルート CA PEM（doctor が使用）
 - `mtu` : doctor が sanity チェック
 - `audit_log_path` : 監査ログ出力先（未指定はデフォルト）
+- `audit_signing_key` : 監査ログ署名キー（任意、HMAC）
+- `audit_ship_url` : 監査ログ送信先（任意、HTTP POST）
+- `audit_ship_token` : 送信時の Bearer トークン（任意）
+- `audit_ship_timeout_secs` : 送信タイムアウト秒（任意、既定 3）
 
 ### 3.1 認証（クライアント側）
 
@@ -54,6 +58,9 @@ Toppy は Rust 製の CLI + ゲートウェイのワークスペースです。
   - `auth_token = "..."` または `[auth] mode = "token"` + `token = "..."`
 - OIDC device-code:
   - `[auth] mode = "oidc_device_code"` を指定し、`toppy login` でトークンを取得してキャッシュします。
+- OIDC auth-code + PKCE（ブラウザログイン）:
+  - `[auth] mode = "oidc_auth_code_pkce"` を指定し、`toppy login` でローカルの `redirect_uri` に戻るフローを使います。
+  - `redirect_uri` は IdP に登録済みの URL である必要があります（例: `http://127.0.0.1:8080/callback`）。
 - SAML（直接統合ではなく broker 経由）:
   - `[auth] mode = "saml"` を指定し、内部的には broker の OIDC device-code を利用します。
 
@@ -88,6 +95,12 @@ burst_bytes = 10485760
 bytes_per_sec = 0
 burst_bytes = 0
 ```
+
+### 3.4 監査ログの署名と送信
+
+- 署名: `audit_signing_key`（または `TOPPY_AUDIT_SIGNING_KEY`）を設定すると、各エントリに HMAC 署名が追加されます。
+- 送信: `audit_ship_url`（または `TOPPY_AUDIT_SHIP_URL`）を設定すると、JSON エントリを HTTP POST で送信します（ベストエフォート）。
+- 検証: `toppy audit verify --signing-key <key>` で署名付きエントリの整合性を検証できます。
 
 ## 4. doctor のチェック仕様
 

@@ -1,9 +1,11 @@
 use ring::digest;
+use ring::hmac;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
@@ -11,6 +13,7 @@ pub enum AuditError {
     Io(io::Error),
     Json(serde_json::Error),
     Invalid(String),
+    Ship(String),
 }
 
 impl std::fmt::Display for AuditError {
@@ -19,6 +22,7 @@ impl std::fmt::Display for AuditError {
             AuditError::Io(e) => write!(f, "io error: {}", e),
             AuditError::Json(e) => write!(f, "json error: {}", e),
             AuditError::Invalid(msg) => write!(f, "invalid audit log: {}", msg),
+            AuditError::Ship(msg) => write!(f, "audit ship error: {}", msg),
         }
     }
 }
@@ -59,6 +63,8 @@ pub struct AuditEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prev_hash: Option<String>,
     pub hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,8 +80,12 @@ struct AuditEntryUnsigned<'a> {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     let digest = digest::digest(&digest::SHA256, bytes);
-    let mut out = String::with_capacity(digest.as_ref().len() * 2);
-    for b in digest.as_ref() {
+    hex_encode(digest.as_ref())
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
         out.push(hex_char((b >> 4) & 0x0f));
         out.push(hex_char(b & 0x0f));
     }
@@ -106,6 +116,12 @@ fn compute_hash(
     };
     let bytes = serde_json::to_vec(&unsigned)?;
     Ok(sha256_hex(&bytes))
+}
+
+fn compute_signature(hash: &str, key: &[u8]) -> String {
+    let signing_key = hmac::Key::new(hmac::HMAC_SHA256, key);
+    let sig = hmac::sign(&signing_key, hash.as_bytes());
+    hex_encode(sig.as_ref())
 }
 
 pub struct AuditChainWriter {
@@ -157,10 +173,20 @@ impl AuditChainWriter {
     }
 
     pub fn append(&mut self, unix_ms: u64, event: AuditEvent) -> Result<AuditEntry, AuditError> {
+        self.append_with_signing_key(unix_ms, event, None)
+    }
+
+    pub fn append_with_signing_key(
+        &mut self,
+        unix_ms: u64,
+        event: AuditEvent,
+        signing_key: Option<&[u8]>,
+    ) -> Result<AuditEntry, AuditError> {
         let version = 1u32;
         let seq = self.next_seq;
         let prev_hash = self.prev_hash.as_deref();
         let hash = compute_hash(version, seq, unix_ms, &event, prev_hash)?;
+        let signature = signing_key.map(|key| compute_signature(&hash, key));
 
         let entry = AuditEntry {
             version,
@@ -169,6 +195,7 @@ impl AuditChainWriter {
             event,
             prev_hash: self.prev_hash.clone(),
             hash: hash.clone(),
+            signature,
         };
 
         serde_json::to_writer(&mut self.writer, &entry)?;
@@ -215,7 +242,24 @@ pub fn append_event(
     w.append(unix_ms, event)
 }
 
+pub fn append_event_signed(
+    path: impl AsRef<Path>,
+    unix_ms: u64,
+    event: AuditEvent,
+    signing_key: Option<&[u8]>,
+) -> Result<AuditEntry, AuditError> {
+    let mut w = AuditChainWriter::open(path)?;
+    w.append_with_signing_key(unix_ms, event, signing_key)
+}
+
 pub fn verify_chain(path: impl AsRef<Path>) -> Result<(), AuditError> {
+    verify_chain_with_signing_key(path, None)
+}
+
+pub fn verify_chain_with_signing_key(
+    path: impl AsRef<Path>,
+    signing_key: Option<&[u8]>,
+) -> Result<(), AuditError> {
     let path = path.as_ref();
     let file = File::open(path)?;
     let reader = BufReader::new(file);
@@ -260,10 +304,59 @@ pub fn verify_chain(path: impl AsRef<Path>) -> Result<(), AuditError> {
             )));
         }
 
+        if let Some(sig) = entry.signature.as_deref() {
+            let key = signing_key.ok_or_else(|| {
+                AuditError::Invalid(format!(
+                    "signature present but no signing key at line {}",
+                    idx + 1
+                ))
+            })?;
+            let expected_sig = compute_signature(&entry.hash, key);
+            if expected_sig != sig {
+                return Err(AuditError::Invalid(format!(
+                    "signature mismatch at line {}",
+                    idx + 1
+                )));
+            }
+        }
+
         expected_prev = Some(entry.hash);
         expected_seq = expected_seq.saturating_add(1);
     }
 
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct AuditShipConfig {
+    pub url: String,
+    pub token: Option<String>,
+    pub timeout_secs: u64,
+}
+
+pub fn ship_entry(entry: &AuditEntry, cfg: &AuditShipConfig) -> Result<(), AuditError> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(cfg.timeout_secs))
+        .build()
+        .map_err(|e| AuditError::Ship(format!("failed to build HTTP client: {}", e)))?;
+
+    let mut request = client.post(&cfg.url).json(entry);
+    if let Some(token) = cfg.token.as_ref() {
+        request = request.bearer_auth(token);
+    }
+
+    let response = request
+        .send()
+        .map_err(|e| AuditError::Ship(format!("failed to ship audit entry: {}", e)))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(AuditError::Ship(format!(
+            "ship failed: {} {}",
+            status,
+            body.trim()
+        )));
+    }
     Ok(())
 }
 
@@ -408,6 +501,32 @@ mod tests {
         fs::write(&path, format!("{}\n", tampered)).unwrap();
 
         assert!(verify_chain(&path).is_err());
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn audit_chain_sign_and_verify() {
+        let path = temp_path("signed.jsonl");
+        let _ = fs::remove_file(&path);
+
+        let mut w = AuditChainWriter::open(&path).unwrap();
+        w.append_with_signing_key(
+            1,
+            AuditEvent {
+                actor: "alice".to_string(),
+                action: "login".to_string(),
+                target: "cfg".to_string(),
+                allowed: true,
+                reason: None,
+            },
+            Some(b"signing-key"),
+        )
+        .unwrap();
+
+        verify_chain_with_signing_key(&path, Some(b"signing-key")).unwrap();
+        assert!(verify_chain_with_signing_key(&path, None).is_err());
+        assert!(verify_chain_with_signing_key(&path, Some(b"wrong")).is_err());
 
         let _ = fs::remove_file(&path);
     }
