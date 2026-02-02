@@ -118,6 +118,23 @@ TODO:
 - `mtu.sanity`
 - `policy.denied`（`TOPPY_DOCTOR_TARGET` 指定時）
 
+### 4.1 Windows Wintun (TUN)
+
+- `wintun.dll` は同梱のサイドカーまたはシステムに配置します（埋め込みはしません）。
+- 探索順: `TOPPY_WINTUN_DLL`（フルパス）→ `TOPPY_WINTUN_DIR`（ディレクトリ）→ 実行ファイル隣 → CWD。
+- `toppy doctor` は `toppy-doctor` アダプタの作成/削除で `tun.perm` を検証します。
+
+リリース時の推奨レイアウト:
+
+- `toppy.exe` と同階層に `wintun.dll`
+- もしくは `wintun/` 配下に置き、`TOPPY_WINTUN_DIR=./wintun`
+
+手動検証:
+
+1. `wintun.dll` を配置（または `TOPPY_WINTUN_DIR` を設定）。
+2. `toppy doctor --json` を実行し、`tun.perm` が `pass` になることを確認。
+3. `toppy-doctor` アダプタが残っていないことを確認。
+
 テスト/CI 向けの強制フラグ（環境変数）:
 - `TOPPY_DOCTOR_NET=pass|fail|skip`
 - `TOPPY_DOCTOR_TUN=pass|fail|skip`

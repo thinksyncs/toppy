@@ -233,6 +233,21 @@ Lookup order for `wintun.dll`:
 exist, it creates and deletes the adapter to validate permissions. Override the
 adapter name with `TOPPY_WINTUN_ADAPTER`.
 
+### Release sidecar layout (recommended)
+
+Place `wintun.dll` next to the CLI executable (no env vars required), or keep it
+in a `wintun/` folder and set `TOPPY_WINTUN_DIR` to that directory.
+
+Example zip layout:
+
+- `toppy.exe`
+- `wintun.dll`
+
+or
+
+- `toppy.exe`
+- `wintun/wintun.dll` (set `TOPPY_WINTUN_DIR=./wintun`)
+
 ### Integration test strategy (Windows TUN)
 
 - Manual smoke test (Windows host/runner):
