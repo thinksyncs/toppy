@@ -49,6 +49,8 @@ pub struct AuditEvent {
     pub target: String,
     pub allowed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
 
@@ -400,6 +402,7 @@ mod tests {
                 action: "connect".to_string(),
                 target: "127.0.0.1:22".to_string(),
                 allowed: true,
+                auth_subject: None,
                 reason: None,
             },
         )
@@ -411,6 +414,7 @@ mod tests {
                 action: "connect".to_string(),
                 target: "127.0.0.1:23".to_string(),
                 allowed: false,
+                auth_subject: None,
                 reason: Some("not allowed".to_string()),
             },
         )
@@ -427,6 +431,7 @@ mod tests {
                 action: "doctor".to_string(),
                 target: "cfg".to_string(),
                 allowed: true,
+                auth_subject: None,
                 reason: None,
             },
         )
@@ -451,6 +456,7 @@ mod tests {
                     action: "connect".to_string(),
                     target: "127.0.0.1:22".to_string(),
                     allowed: true,
+                    auth_subject: None,
                     reason: None,
                 },
             )
@@ -487,6 +493,7 @@ mod tests {
                 action: "doctor".to_string(),
                 target: "cfg".to_string(),
                 allowed: true,
+                auth_subject: None,
                 reason: None,
             },
         )
@@ -518,6 +525,7 @@ mod tests {
                 action: "login".to_string(),
                 target: "cfg".to_string(),
                 allowed: true,
+                auth_subject: None,
                 reason: None,
             },
             Some(b"signing-key"),

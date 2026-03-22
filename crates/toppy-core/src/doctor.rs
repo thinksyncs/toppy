@@ -199,6 +199,8 @@ fn parse_policy_target(value: &str) -> Result<Target, String> {
     Ok(Target {
         ip: addr.ip(),
         port: addr.port(),
+        subject: None,
+        claims: std::collections::BTreeMap::new(),
     })
 }
 

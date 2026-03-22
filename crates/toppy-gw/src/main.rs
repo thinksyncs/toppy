@@ -15,7 +15,9 @@ use bytes::Bytes;
 use h3::ext::Protocol;
 use h3_datagram::datagram_handler::HandleDatagramsExt;
 use http::StatusCode as HttpStatusCode;
+use std::collections::HashMap;
 use toppy_proto::masque::{HttpDatagram, CONNECT_UDP_CONTEXT_ID};
+use toppy_core::rate::TokenBucket;
 
 fn main() {
     let http_listen = env::var("TOPPY_GW_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
@@ -212,60 +214,32 @@ async fn handle_h3_connection(
         .await
         .map_err(|e| format!("h3 accept failed: {e:?}"))?;
 
-    while let Some(resolver) = h3_conn
-        .accept()
-        .await
-        .map_err(|e| format!("h3 accept request failed: {e:?}"))?
-    {
-        let (req, mut stream) = resolver
-            .resolve_request()
-            .await
-            .map_err(|e| format!("h3 resolve request failed: {e:?}"))?;
-        let is_connect = req.method() == http::Method::CONNECT;
-        let protocol = req.extensions().get::<Protocol>().copied();
+    let udp_rate_limit = gw_udp_rate_limit_from_env();
+    let mut datagram_routes: HashMap<h3::quic::StreamId, tokio::sync::mpsc::UnboundedSender<Bytes>> =
+        HashMap::new();
+    let (session_done_tx, mut session_done_rx) =
+        tokio::sync::mpsc::unbounded_channel::<ConnectUdpSessionDone>();
+    let mut dg_reader = h3_conn.get_datagram_reader();
 
-        if !is_connect || protocol != Some(Protocol::CONNECT_UDP) {
-            let res = http::Response::builder()
-                .status(HttpStatusCode::NOT_FOUND)
-                .body(())
-                .map_err(|e| format!("h3 response build failed: {e}"))?;
-            stream
-                .send_response(res)
-                .await
-                .map_err(|e| format!("h3 send response failed: {e:?}"))?;
-            let _ = stream.finish().await;
-            continue;
-        }
+    loop {
+        tokio::select! {
+            accept = h3_conn.accept() => {
+                let Some(resolver) = accept
+                    .map_err(|e| format!("h3 accept request failed: {e:?}"))?
+                else {
+                    break;
+                };
 
-        let authz = req
-            .headers()
-            .get("authorization")
-            .and_then(|v| v.to_str().ok());
-        let token = authz
-            .and_then(|v| v.strip_prefix("Bearer ").or(Some(v)))
-            .map(|v| v.trim());
-        if let Err(err) = auth_mode.validate(token) {
-            let res = http::Response::builder()
-                .status(HttpStatusCode::UNAUTHORIZED)
-                .body(())
-                .map_err(|e| format!("h3 response build failed: {e}"))?;
-            stream
-                .send_response(res)
-                .await
-                .map_err(|e| format!("h3 send response failed: {e:?}"))?;
-            let _ = stream.finish().await;
-            eprintln!("connect-udp unauthorized: {err}");
-            continue;
-        }
+                let (req, mut stream) = resolver
+                    .resolve_request()
+                    .await
+                    .map_err(|e| format!("h3 resolve request failed: {e:?}"))?;
+                let is_connect = req.method() == http::Method::CONNECT;
+                let protocol = req.extensions().get::<Protocol>().copied();
 
-        let mode = ConnectUdpMode::from_uri(req.uri());
-        let target = match &mode {
-            ConnectUdpMode::Echo => None,
-            ConnectUdpMode::Forward => match parse_connect_udp_target(req.uri()).await {
-                Ok(addr) => Some(addr),
-                Err(err) => {
+                if !is_connect || protocol != Some(Protocol::CONNECT_UDP) {
                     let res = http::Response::builder()
-                        .status(HttpStatusCode::BAD_REQUEST)
+                        .status(HttpStatusCode::NOT_FOUND)
                         .body(())
                         .map_err(|e| format!("h3 response build failed: {e}"))?;
                     stream
@@ -273,97 +247,199 @@ async fn handle_h3_connection(
                         .await
                         .map_err(|e| format!("h3 send response failed: {e:?}"))?;
                     let _ = stream.finish().await;
-                    eprintln!("connect-udp bad request: {err}");
                     continue;
                 }
-            },
-        };
 
-        // Minimal CONNECT-UDP handshake: accept the request.
-        let res = http::Response::builder()
-            .status(HttpStatusCode::OK)
-            .body(())
-            .map_err(|e| format!("h3 response build failed: {e}"))?;
-        stream
-            .send_response(res)
-            .await
-            .map_err(|e| format!("h3 send response failed: {e:?}"))?;
-
-        let udp = if let Some(target) = target {
-            let udp = tokio::net::UdpSocket::bind("0.0.0.0:0")
-                .await
-                .map_err(|e| format!("udp bind failed: {e}"))?;
-            udp.connect(target)
-                .await
-                .map_err(|e| format!("udp connect failed: {e}"))?;
-            Some(udp)
-        } else {
-            None
-        };
-
-        // Echo or relay datagrams for this CONNECT-UDP stream.
-        let stream_id = stream.id();
-        let mut dg_sender = h3_conn.get_datagram_sender(stream_id);
-        let mut dg_reader = h3_conn.get_datagram_reader();
-        let mut buf = vec![0u8; 2048];
-
-        loop {
-            tokio::select! {
-                dg = dg_reader.read_datagram() => {
-                    let dg = dg.map_err(|e| format!("h3 recv datagram failed: {e:?}"))?;
-                    if dg.stream_id() != stream_id {
-                        continue;
-                    }
-                    let payload = dg.into_payload();
-                    match &mode {
-                        ConnectUdpMode::Echo => {
-                            dg_sender
-                                .send_datagram(payload)
-                                .map_err(|e| format!("h3 send datagram failed: {e}"))?;
-                        }
-                        ConnectUdpMode::Forward => {
-                            let decoded = HttpDatagram::decode(payload.as_ref())
-                                .map_err(|_| "invalid http datagram".to_string())?;
-                            if decoded.context_id != CONNECT_UDP_CONTEXT_ID {
-                                continue;
-                            }
-                            if let Some(udp) = udp.as_ref() {
-                                udp
-                                    .send(decoded.payload.as_slice())
-                                    .await
-                                    .map_err(|e| format!("udp send failed: {e}"))?;
-                            }
-                        }
-                    }
+                let authz = req
+                    .headers()
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok());
+                let token = authz
+                    .and_then(|v| v.strip_prefix("Bearer ").or(Some(v)))
+                    .map(|v| v.trim());
+                if let Err(err) = auth_mode.validate(token) {
+                    let res = http::Response::builder()
+                        .status(HttpStatusCode::UNAUTHORIZED)
+                        .body(())
+                        .map_err(|e| format!("h3 response build failed: {e}"))?;
+                    stream
+                        .send_response(res)
+                        .await
+                        .map_err(|e| format!("h3 send response failed: {e:?}"))?;
+                    let _ = stream.finish().await;
+                    eprintln!("connect-udp unauthorized: {err}");
+                    continue;
                 }
-                n = async {
-                    match udp.as_ref() {
-                        Some(udp) => udp.recv(&mut buf).await.map(Some),
-                        None => {
-                            std::future::pending::<Result<Option<usize>, std::io::Error>>().await
+
+                let mode = ConnectUdpMode::from_uri(req.uri());
+                let target = match mode {
+                    ConnectUdpMode::Echo => None,
+                    ConnectUdpMode::Forward => match parse_connect_udp_target(req.uri()).await {
+                        Ok(addr) => Some(addr),
+                        Err(err) => {
+                            let res = http::Response::builder()
+                                .status(HttpStatusCode::BAD_REQUEST)
+                                .body(())
+                                .map_err(|e| format!("h3 response build failed: {e}"))?;
+                            stream
+                                .send_response(res)
+                                .await
+                                .map_err(|e| format!("h3 send response failed: {e:?}"))?;
+                            let _ = stream.finish().await;
+                            eprintln!("connect-udp bad request: {err}");
+                            continue;
+                        }
+                    },
+                };
+
+                let res = http::Response::builder()
+                    .status(HttpStatusCode::OK)
+                    .body(())
+                    .map_err(|e| format!("h3 response build failed: {e}"))?;
+                stream
+                    .send_response(res)
+                    .await
+                    .map_err(|e| format!("h3 send response failed: {e:?}"))?;
+
+                let udp = if let Some(target_addr) = target {
+                    let udp = tokio::net::UdpSocket::bind("0.0.0.0:0")
+                        .await
+                        .map_err(|e| format!("udp bind failed: {e}"))?;
+                    udp.connect(target_addr)
+                        .await
+                        .map_err(|e| format!("udp connect failed: {e}"))?;
+                    Some(udp)
+                } else {
+                    None
+                };
+
+                let stream_id = stream.id();
+                let mut dg_sender = h3_conn.get_datagram_sender(stream_id);
+                let (session_tx, mut session_rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+                datagram_routes.insert(stream_id, session_tx);
+                let done_tx = session_done_tx.clone();
+
+                tokio::spawn(async move {
+                    let started_at = std::time::Instant::now();
+                    let mut ingress_limiter = gw_udp_limiter(udp_rate_limit);
+                    let mut egress_limiter = gw_udp_limiter(udp_rate_limit);
+                    let mut ingress_datagrams = 0u64;
+                    let mut egress_datagrams = 0u64;
+                    let mut ingress_rate_drops = 0u64;
+                    let mut egress_rate_drops = 0u64;
+                    let mut buf = vec![0u8; 2048];
+
+                    loop {
+                        tokio::select! {
+                            maybe_payload = session_rx.recv() => {
+                                let Some(payload) = maybe_payload else {
+                                    break;
+                                };
+                                ingress_datagrams = ingress_datagrams.saturating_add(1);
+                                if !gw_udp_datagram_allowed(&mut ingress_limiter, payload.len(), started_at) {
+                                    ingress_rate_drops = ingress_rate_drops.saturating_add(1);
+                                    continue;
+                                }
+
+                                match mode {
+                                    ConnectUdpMode::Echo => {
+                                        if let Err(err) = dg_sender.send_datagram(payload) {
+                                            eprintln!("connect-udp echo send failed on {:?}: {}", stream_id, err);
+                                            break;
+                                        }
+                                    }
+                                    ConnectUdpMode::Forward => {
+                                        let decoded = match HttpDatagram::decode(payload.as_ref()) {
+                                            Ok(decoded) => decoded,
+                                            Err(_) => continue,
+                                        };
+                                        if decoded.context_id != CONNECT_UDP_CONTEXT_ID {
+                                            continue;
+                                        }
+                                        if let Some(udp) = udp.as_ref() {
+                                            if let Err(err) = udp.send(decoded.payload.as_slice()).await {
+                                                eprintln!("udp send failed on {:?}: {}", stream_id, err);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            n = async {
+                                match udp.as_ref() {
+                                    Some(udp) => udp.recv(&mut buf).await.map(Some),
+                                    None => std::future::pending::<Result<Option<usize>, std::io::Error>>().await,
+                                }
+                            } => {
+                                let n = match n {
+                                    Ok(Some(n)) => n,
+                                    Ok(None) => continue,
+                                    Err(err) => {
+                                        eprintln!("udp recv failed on {:?}: {}", stream_id, err);
+                                        break;
+                                    }
+                                };
+
+                                egress_datagrams = egress_datagrams.saturating_add(1);
+                                if !gw_udp_datagram_allowed(&mut egress_limiter, n, started_at) {
+                                    egress_rate_drops = egress_rate_drops.saturating_add(1);
+                                    continue;
+                                }
+
+                                let dg = match HttpDatagram::new(CONNECT_UDP_CONTEXT_ID, &buf[..n]).encode() {
+                                    Ok(dg) => dg,
+                                    Err(_) => continue,
+                                };
+                                if let Err(err) = dg_sender.send_datagram(Bytes::from(dg)) {
+                                    eprintln!("h3 send datagram failed on {:?}: {}", stream_id, err);
+                                    break;
+                                }
+                            }
+                            chunk = stream.recv_data() => {
+                                match chunk {
+                                    Ok(Some(_)) => {}
+                                    Ok(None) => break,
+                                    Err(err) => {
+                                        eprintln!("h3 recv data failed on {:?}: {:?}", stream_id, err);
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
-                } => {
-                    let n = n.map_err(|e| format!("udp recv failed: {e}"))?;
-                    let Some(n) = n else { continue; };
-                    let dg = HttpDatagram::new(CONNECT_UDP_CONTEXT_ID, &buf[..n])
-                        .encode()
-                        .map_err(|_| "encode http datagram failed".to_string())?;
-                    dg_sender
-                        .send_datagram(Bytes::from(dg))
-                        .map_err(|e| format!("h3 send datagram failed: {e}"))?;
-                }
-                chunk = stream.recv_data() => {
-                    match chunk.map_err(|e| format!("h3 recv data failed: {e:?}"))? {
-                        Some(_chunk) => {
-                            // CONNECT-UDP payload is carried in HTTP Datagrams, not stream data.
-                        }
-                        None => break,
-                    }
+
+                    let _ = stream.finish().await;
+                    let _ = done_tx.send(ConnectUdpSessionDone {
+                        stream_id,
+                        mode,
+                        target,
+                        ingress_datagrams,
+                        egress_datagrams,
+                        ingress_rate_drops,
+                        egress_rate_drops,
+                    });
+                });
+            }
+            dg = dg_reader.read_datagram() => {
+                let dg = dg.map_err(|e| format!("h3 recv datagram failed: {e:?}"))?;
+                if let Some(tx) = datagram_routes.get(&dg.stream_id()) {
+                    let _ = tx.send(dg.into_payload());
                 }
             }
+            Some(done) = session_done_rx.recv() => {
+                datagram_routes.remove(&done.stream_id);
+                eprintln!(
+                    "connect-udp session ended: stream_id={:?} mode={:?} target={:?} ingress_datagrams={} egress_datagrams={} ingress_rate_drops={} egress_rate_drops={}",
+                    done.stream_id,
+                    done.mode,
+                    done.target,
+                    done.ingress_datagrams,
+                    done.egress_datagrams,
+                    done.ingress_rate_drops,
+                    done.egress_rate_drops,
+                );
+            }
         }
-        let _ = stream.finish().await;
     }
 
     Ok(())
@@ -375,6 +451,54 @@ enum ConnectUdpMode {
     Echo,
     /// UDP forwarding to the target encoded in the URI.
     Forward,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GwUdpRateLimit {
+    bytes_per_sec: u64,
+    burst_bytes: u64,
+}
+
+#[derive(Debug)]
+struct ConnectUdpSessionDone {
+    stream_id: h3::quic::StreamId,
+    mode: ConnectUdpMode,
+    target: Option<SocketAddr>,
+    ingress_datagrams: u64,
+    egress_datagrams: u64,
+    ingress_rate_drops: u64,
+    egress_rate_drops: u64,
+}
+
+fn gw_udp_rate_limit_from_env() -> Option<GwUdpRateLimit> {
+    let bytes_per_sec = env::var("TOPPY_GW_UDP_BYTES_PER_SEC")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)?;
+    let burst_bytes = env::var("TOPPY_GW_UDP_BURST_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(bytes_per_sec);
+    Some(GwUdpRateLimit {
+        bytes_per_sec,
+        burst_bytes,
+    })
+}
+
+fn gw_udp_limiter(limit: Option<GwUdpRateLimit>) -> Option<TokenBucket> {
+    limit.map(|limit| TokenBucket::new(limit.burst_bytes, limit.bytes_per_sec))
+}
+
+fn gw_udp_datagram_allowed(
+    bucket: &mut Option<TokenBucket>,
+    bytes: usize,
+    started_at: std::time::Instant,
+) -> bool {
+    match bucket.as_mut() {
+        Some(bucket) => bucket.try_take(bytes as u64, started_at.elapsed()),
+        None => true,
+    }
 }
 
 impl ConnectUdpMode {

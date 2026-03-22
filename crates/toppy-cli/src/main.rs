@@ -3,18 +3,21 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use toppy_core::audit::{
     append_event_signed, default_audit_log_path, now_unix_ms, ship_entry,
     verify_chain_with_signing_key, AuditEvent, AuditShipConfig,
 };
+use toppy_core::auth::{extract_jwt_identity, AuthIdentity};
 use toppy_core::config::{ClientAuthConfig, SessionRateLimit};
 use toppy_core::oidc;
 use toppy_core::policy::{Decision, Policy, Target};
+use toppy_core::rate::TokenBucket;
 use url::Url;
 
 use bytes::Bytes;
 use h3::ext::Protocol;
+
 use h3::quic::StreamId;
 use h3_datagram::datagram_handler::HandleDatagramsExt;
 use quinn::crypto::rustls::QuicClientConfig;
@@ -193,12 +196,23 @@ fn current_actor() -> String {
 }
 
 fn try_audit_event(action: &str, target: &str, allowed: bool, reason: Option<String>) {
+    try_audit_event_with_subject(action, target, allowed, reason, None);
+}
+
+fn try_audit_event_with_subject(
+    action: &str,
+    target: &str,
+    allowed: bool,
+    reason: Option<String>,
+    auth_subject: Option<String>,
+) {
     let path = audit_log_path_from_env_or_config().unwrap_or_else(default_audit_log_path);
     let event = AuditEvent {
         actor: current_actor(),
         action: action.to_string(),
         target: target.to_string(),
         allowed,
+        auth_subject,
         reason,
     };
     let signing_key = audit_signing_key_from_env_or_config();
@@ -212,6 +226,86 @@ fn try_audit_event(action: &str, target: &str, allowed: bool, reason: Option<Str
         }
         Err(err) => eprintln!("audit log write failed: {}", err),
     }
+}
+
+#[derive(Debug)]
+struct UdpPeerState {
+    stream_id: StreamId,
+    last_active: Instant,
+    ingress_limiter: Option<TokenBucket>,
+    egress_limiter: Option<TokenBucket>,
+    ingress_rate_drops: u64,
+    egress_rate_drops: u64,
+}
+
+#[derive(Debug, Default)]
+struct UdpProxyMetrics {
+    peers_created: u64,
+    ingress_datagrams: u64,
+    egress_datagrams: u64,
+    ingress_rate_drops: u64,
+    egress_rate_drops: u64,
+    idle_evictions: u64,
+    cap_drops: u64,
+}
+
+fn auth_identity_from_token(token: Option<&str>) -> AuthIdentity {
+    token
+        .and_then(|value| extract_jwt_identity(value).ok())
+        .unwrap_or_default()
+}
+
+fn best_effort_auth_identity(cfg: &toppy_core::config::Config) -> AuthIdentity {
+    match cfg.resolve_auth_token() {
+        Ok(Some(token)) => auth_identity_from_token(Some(&token)),
+        _ => AuthIdentity::default(),
+    }
+}
+
+fn udp_idle_timeout() -> Duration {
+    std::env::var("TOPPY_UDP_IDLE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(60))
+}
+
+fn udp_max_peers() -> usize {
+    std::env::var("TOPPY_UDP_MAX_PEERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(128)
+}
+
+fn udp_limiter(limit: SessionRateLimit) -> Option<TokenBucket> {
+    if limit.is_enabled() {
+        Some(TokenBucket::new(limit.burst_bytes, limit.bytes_per_sec))
+    } else {
+        None
+    }
+}
+
+fn udp_datagram_allowed(bucket: &mut Option<TokenBucket>, bytes: usize, started_at: Instant) -> bool {
+    match bucket.as_mut() {
+        Some(bucket) => bucket.try_take(bytes as u64, started_at.elapsed()),
+        None => true,
+    }
+}
+
+fn log_udp_metrics(metrics: &UdpProxyMetrics, active_peers: usize) {
+    eprintln!(
+        "udp metrics: active_peers={} peers_created={} ingress_datagrams={} egress_datagrams={} ingress_rate_drops={} egress_rate_drops={} idle_evictions={} cap_drops={}",
+        active_peers,
+        metrics.peers_created,
+        metrics.ingress_datagrams,
+        metrics.egress_datagrams,
+        metrics.ingress_rate_drops,
+        metrics.egress_rate_drops,
+        metrics.idle_evictions,
+        metrics.cap_drops,
+    );
 }
 
 fn parse_socket_addr(label: &str, value: &str) -> Result<SocketAddr, String> {
@@ -347,11 +441,8 @@ fn proxy_connection(
     Ok(())
 }
 
-fn proxy_once(inbound: TcpStream, target: SocketAddr) -> io::Result<()> {
-    let _ = inbound.set_nodelay(true);
-    let outbound = TcpStream::connect(target)?;
-    let _ = outbound.set_nodelay(true);
-    Ok(())
+fn proxy_once(inbound: TcpStream, target: SocketAddr, limit: SessionRateLimit) -> io::Result<()> {
+    proxy_connection(inbound, target, limit)
 }
 
 fn main() {
@@ -360,12 +451,17 @@ fn main() {
         Some(Commands::Doctor { json }) => {
             // Invoke the doctor checks from toppy_core and print JSON
             let report = toppy_core::doctor::doctor_check();
+            let auth_subject = toppy_core::config::load_config()
+                .ok()
+                .map(|(cfg, _)| best_effort_auth_identity(&cfg))
+                .and_then(|identity| identity.subject);
             // Best-effort audit log: record the overall outcome.
-            try_audit_event(
+            try_audit_event_with_subject(
                 "doctor",
                 "doctor",
                 report.overall != "fail",
                 Some(format!("overall={}", report.overall)),
+                auth_subject,
             );
             if json {
                 match serde_json::to_string_pretty(&report) {
@@ -718,6 +814,9 @@ fn main() {
                 std::process::exit(1);
             }
 
+            let auth_identity = best_effort_auth_identity(&cfg);
+            let auth_subject = auth_identity.subject.clone();
+
             let session_rate_limit = cfg.session_rate_limit();
 
             let target_addr = match parse_socket_addr("target", &target) {
@@ -748,12 +847,20 @@ fn main() {
             let target_policy = Target {
                 ip: target_addr.ip(),
                 port: target_addr.port(),
+                subject: auth_identity.subject.clone(),
+                claims: auth_identity.claims.clone(),
             };
             match policy.evaluate(&target_policy) {
                 Decision::Allow => {}
                 Decision::Deny { reason } => {
                     eprintln!("Policy denied: {}", reason);
-                    try_audit_event("up", &target, false, Some(reason));
+                    try_audit_event_with_subject(
+                        "up",
+                        &target,
+                        false,
+                        Some(reason),
+                        auth_subject.clone(),
+                    );
                     std::process::exit(2);
                 }
             }
@@ -776,19 +883,22 @@ fn main() {
 
             // Record that the forwarder was started. Subsequent connection failures are still
             // reported to stderr by the proxy threads.
-            try_audit_event(
+            try_audit_event_with_subject(
                 "up",
                 &target,
                 true,
                 Some(format!("listening={}", local_addr)),
+                auth_subject,
             );
 
+            let mut once_failed = false;
             for stream in listener.incoming() {
                 match stream {
                     Ok(inbound) => {
                         if once {
-                            if let Err(err) = proxy_once(inbound, target_addr) {
+                            if let Err(err) = proxy_once(inbound, target_addr, session_rate_limit) {
                                 eprintln!("proxy connection failed: {}", err);
+                                once_failed = true;
                             }
                             break;
                         }
@@ -807,6 +917,10 @@ fn main() {
                         }
                     }
                 }
+            }
+
+            if once_failed {
+                std::process::exit(1);
             }
         }
         Some(Commands::Udp { target, listen }) => {
@@ -836,6 +950,8 @@ fn main() {
                 std::process::exit(1);
             }
 
+            let session_rate_limit = cfg.session_rate_limit();
+
             let target_addr = match parse_socket_addr("target", &target) {
                 Ok(addr) => addr,
                 Err(err) => {
@@ -850,6 +966,19 @@ fn main() {
                     std::process::exit(1);
                 }
             };
+            let auth_token = match cfg.resolve_auth_token() {
+                Ok(Some(t)) => t,
+                Ok(None) => {
+                    eprintln!("Missing auth token (auth_token/auth config)");
+                    std::process::exit(1);
+                }
+                Err(err) => {
+                    eprintln!("Failed to resolve auth token: {}", err);
+                    std::process::exit(1);
+                }
+            };
+            let auth_identity = auth_identity_from_token(Some(&auth_token));
+            let auth_subject = auth_identity.subject.clone();
 
             let policy = match cfg.policy.as_ref() {
                 Some(policy_cfg) => match Policy::from_config(policy_cfg) {
@@ -864,12 +993,20 @@ fn main() {
             let target_policy = Target {
                 ip: target_addr.ip(),
                 port: target_addr.port(),
+                subject: auth_identity.subject.clone(),
+                claims: auth_identity.claims.clone(),
             };
             match policy.evaluate(&target_policy) {
                 Decision::Allow => {}
                 Decision::Deny { reason } => {
                     eprintln!("Policy denied: {}", reason);
-                    try_audit_event("udp", &target, false, Some(reason));
+                    try_audit_event_with_subject(
+                        "udp",
+                        &target,
+                        false,
+                        Some(reason),
+                        auth_subject.clone(),
+                    );
                     std::process::exit(2);
                 }
             }
@@ -905,18 +1042,6 @@ fn main() {
                     eprintln!("Missing config: ca_cert_path");
                     std::process::exit(1);
                 });
-            let auth_token = match cfg.resolve_auth_token() {
-                Ok(Some(t)) => t,
-                Ok(None) => {
-                    eprintln!("Missing auth token (auth_token/auth config)");
-                    std::process::exit(1);
-                }
-                Err(err) => {
-                    eprintln!("Failed to resolve auth token: {}", err);
-                    std::process::exit(1);
-                }
-            };
-
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
@@ -924,6 +1049,7 @@ fn main() {
                     eprintln!("failed to start tokio runtime: {}", e);
                     std::process::exit(1);
                 });
+            let auth_subject_for_run = auth_subject.clone();
 
             let run = rt.block_on(async move {
                 let addr = format!("{}:{}", host, port);
@@ -986,20 +1112,30 @@ fn main() {
                 let local_addr = udp
                     .local_addr()
                     .map_err(|e| format!("failed to read local addr: {}", e))?;
+                let idle_timeout = udp_idle_timeout();
+                let max_peers = udp_max_peers();
+                let rate_limit_start = Instant::now();
+                let mut cleanup = tokio::time::interval(Duration::from_secs(5));
+                cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 println!("toppy udp listening on {} -> {}", local_addr, target_addr);
-                try_audit_event(
+                eprintln!(
+                    "udp session controls: idle_timeout={}s max_peers={} rate_limit={}",
+                    idle_timeout.as_secs(),
+                    max_peers,
+                    if session_rate_limit.is_enabled() { "enabled" } else { "disabled" }
+                );
+                try_audit_event_with_subject(
                     "udp",
                     &target_for_audit,
                     true,
                     Some(format!("listening={}", local_addr)),
+                    auth_subject_for_run.clone(),
                 );
 
-                // Multi-client mapping: we keep one CONNECT-UDP request stream per local UDP peer.
-                // This allows correct reply routing without relying on a single "last sender".
-                // TODO(toppy-viw): apply rate limiting to CONNECT-UDP datagrams (ingress/egress).
-                let mut peer_to_stream: HashMap<SocketAddr, StreamId> = HashMap::new();
+                let mut peer_state: HashMap<SocketAddr, UdpPeerState> = HashMap::new();
                 let mut stream_to_peer: HashMap<StreamId, SocketAddr> = HashMap::new();
-                let mut stream_keepalive: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
+                let mut stream_keepalive: Vec<(StreamId, Box<dyn std::any::Any + Send>)> = Vec::new();
+                let mut metrics = UdpProxyMetrics::default();
 
                 let mut dg_reader = h3_conn.get_datagram_reader();
                 let mut buf = vec![0u8; 2048];
@@ -1008,9 +1144,15 @@ fn main() {
                     tokio::select! {
                         recv = udp.recv_from(&mut buf) => {
                             let (n, peer) = recv.map_err(|e| format!("udp recv failed: {}", e))?;
-                            let stream_id = match peer_to_stream.get(&peer).copied() {
+                            let stream_id = match peer_state.get(&peer).map(|state| state.stream_id) {
                                 Some(id) => id,
                                 None => {
+                                    if peer_state.len() >= max_peers {
+                                        metrics.cap_drops = metrics.cap_drops.saturating_add(1);
+                                        eprintln!("udp peer cap reached: dropping datagram from {}", peer);
+                                        continue;
+                                    }
+
                                     let uri: http::Uri = format!(
                                         "https://{}/.well-known/masque/udp-forward/{}/{}/",
                                         host,
@@ -1052,12 +1194,35 @@ fn main() {
                                     }
 
                                     let stream_id: StreamId = stream.id();
-                                    peer_to_stream.insert(peer, stream_id);
+                                    peer_state.insert(
+                                        peer,
+                                        UdpPeerState {
+                                            stream_id,
+                                            last_active: Instant::now(),
+                                            ingress_limiter: udp_limiter(session_rate_limit),
+                                            egress_limiter: udp_limiter(session_rate_limit),
+                                            ingress_rate_drops: 0,
+                                            egress_rate_drops: 0,
+                                        },
+                                    );
                                     stream_to_peer.insert(stream_id, peer);
-                                    stream_keepalive.push(Box::new(stream));
+                                    stream_keepalive.push((stream_id, Box::new(stream)));
+                                    metrics.peers_created = metrics.peers_created.saturating_add(1);
                                     stream_id
                                 }
                             };
+
+                            let state = peer_state
+                                .get_mut(&peer)
+                                .ok_or_else(|| format!("missing udp peer state for {}", peer))?;
+                            state.last_active = Instant::now();
+                            metrics.ingress_datagrams = metrics.ingress_datagrams.saturating_add(1);
+                            if !udp_datagram_allowed(&mut state.ingress_limiter, n, rate_limit_start) {
+                                state.ingress_rate_drops = state.ingress_rate_drops.saturating_add(1);
+                                metrics.ingress_rate_drops = metrics.ingress_rate_drops.saturating_add(1);
+                                continue;
+                            }
+
                             let dg = HttpDatagram::new(CONNECT_UDP_CONTEXT_ID, &buf[..n])
                                 .encode()
                                 .map_err(|_| "encode http datagram failed".to_string())?;
@@ -1076,7 +1241,36 @@ fn main() {
                                 continue;
                             }
                             if let Some(peer) = stream_to_peer.get(&dg_stream_id).copied() {
+                                if let Some(state) = peer_state.get_mut(&peer) {
+                                    state.last_active = Instant::now();
+                                    if !udp_datagram_allowed(&mut state.egress_limiter, decoded.payload.len(), rate_limit_start) {
+                                        state.egress_rate_drops = state.egress_rate_drops.saturating_add(1);
+                                        metrics.egress_rate_drops = metrics.egress_rate_drops.saturating_add(1);
+                                        continue;
+                                    }
+                                }
                                 let _ = udp.send_to(decoded.payload.as_slice(), peer).await;
+                                metrics.egress_datagrams = metrics.egress_datagrams.saturating_add(1);
+                            }
+                        }
+                        _ = cleanup.tick() => {
+                            let now = Instant::now();
+                            let mut expired = Vec::new();
+                            for (peer, state) in &peer_state {
+                                if now.duration_since(state.last_active) >= idle_timeout {
+                                    expired.push((*peer, state.stream_id));
+                                }
+                            }
+
+                            if !expired.is_empty() {
+                                metrics.idle_evictions = metrics.idle_evictions.saturating_add(expired.len() as u64);
+                                for (peer, stream_id) in expired {
+                                    peer_state.remove(&peer);
+                                    stream_to_peer.remove(&stream_id);
+                                    stream_keepalive.retain(|(id, _)| *id != stream_id);
+                                    eprintln!("udp peer idle cleanup: peer={} stream_id={:?}", peer, stream_id);
+                                }
+                                log_udp_metrics(&metrics, peer_state.len());
                             }
                         }
                         _ = tokio::signal::ctrl_c() => {
@@ -1084,6 +1278,7 @@ fn main() {
                         }
                     }
                 }
+                log_udp_metrics(&metrics, peer_state.len());
                 let _ = h3_conn.shutdown(0).await;
                 let _ = h3_conn.wait_idle().await;
                 endpoint.wait_idle().await;
@@ -1092,7 +1287,13 @@ fn main() {
 
             if let Err(err) = run {
                 eprintln!("udp proxy failed: {}", err);
-                try_audit_event("udp", &target_for_err, false, Some(err));
+                try_audit_event_with_subject(
+                    "udp",
+                    &target_for_err,
+                    false,
+                    Some(err),
+                    auth_subject,
+                );
                 std::process::exit(1);
             }
         }
@@ -1132,5 +1333,48 @@ fn main() {
         None => {
             println!("No subcommand provided. Try `toppy doctor`.");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Shutdown;
+
+    #[test]
+    fn proxy_once_relays_bidirectional_traffic() {
+        let target_listener = TcpListener::bind("127.0.0.1:0").expect("bind target listener");
+        let target_addr = target_listener.local_addr().expect("target addr");
+        let target_thread = thread::spawn(move || {
+            let (mut socket, _) = target_listener.accept().expect("accept target connection");
+            let mut buf = [0u8; 64];
+            let n = socket.read(&mut buf).expect("read relayed payload");
+            socket
+                .write_all(&buf[..n])
+                .expect("write echoed payload");
+        });
+
+        let inbound_listener = TcpListener::bind("127.0.0.1:0").expect("bind inbound listener");
+        let inbound_addr = inbound_listener.local_addr().expect("inbound addr");
+        let proxy_thread = thread::spawn(move || {
+            let (inbound, _) = inbound_listener.accept().expect("accept inbound connection");
+            proxy_once(inbound, target_addr, SessionRateLimit::disabled())
+                .expect("proxy once should relay traffic");
+        });
+
+        let payload = b"hello over once";
+        let mut client = TcpStream::connect(inbound_addr).expect("connect to proxy");
+        client.write_all(payload).expect("write request");
+        client.shutdown(Shutdown::Write).expect("shutdown client write");
+
+        let mut echoed = vec![0u8; payload.len()];
+        client.read_exact(&mut echoed).expect("read echoed reply");
+
+        assert_eq!(echoed, payload);
+
+        drop(client);
+
+        proxy_thread.join().expect("proxy thread join");
+        target_thread.join().expect("target thread join");
     }
 }

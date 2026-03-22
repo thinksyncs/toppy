@@ -10,3 +10,9 @@
 
 # Local patch artifacts
 /doctor_dynamic.patch
+
+# macOS Finder metadata
+.DS_Store
+
+# Local auth design scratch doc
+/docs/auth-design.md
