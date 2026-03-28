@@ -1526,6 +1526,85 @@ mod tests {
     use std::net::Shutdown;
 
     #[test]
+    fn audit_remote_verify_config_prefers_explicit_values() {
+        let _guard = toppy_core::test_support::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev_url = std::env::var("TOPPY_AUDIT_VERIFY_URL").ok();
+        let prev_token = std::env::var("TOPPY_AUDIT_VERIFY_TOKEN").ok();
+        let prev_timeout = std::env::var("TOPPY_AUDIT_VERIFY_TIMEOUT").ok();
+        std::env::set_var("TOPPY_AUDIT_VERIFY_URL", "https://env.example/verify");
+        std::env::set_var("TOPPY_AUDIT_VERIFY_TOKEN", "env-token");
+        std::env::set_var("TOPPY_AUDIT_VERIFY_TIMEOUT", "9");
+
+        let cfg = audit_remote_verify_config(
+            Some("https://flag.example/verify".to_string()),
+            Some("flag-token".to_string()),
+            Some(4),
+        )
+        .expect("cfg");
+        assert_eq!(cfg.url, "https://flag.example/verify");
+        assert_eq!(cfg.token.as_deref(), Some("flag-token"));
+        assert_eq!(cfg.timeout_secs, 4);
+
+        if let Some(value) = prev_url {
+            std::env::set_var("TOPPY_AUDIT_VERIFY_URL", value);
+        } else {
+            std::env::remove_var("TOPPY_AUDIT_VERIFY_URL");
+        }
+        if let Some(value) = prev_token {
+            std::env::set_var("TOPPY_AUDIT_VERIFY_TOKEN", value);
+        } else {
+            std::env::remove_var("TOPPY_AUDIT_VERIFY_TOKEN");
+        }
+        if let Some(value) = prev_timeout {
+            std::env::set_var("TOPPY_AUDIT_VERIFY_TIMEOUT", value);
+        } else {
+            std::env::remove_var("TOPPY_AUDIT_VERIFY_TIMEOUT");
+        }
+    }
+
+    #[test]
+    fn udp_env_helpers_use_defaults_and_overrides() {
+        let _guard = toppy_core::test_support::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev_idle = std::env::var("TOPPY_UDP_IDLE_SECS").ok();
+        let prev_max = std::env::var("TOPPY_UDP_MAX_PEERS").ok();
+        let prev_batch = std::env::var("TOPPY_AUDIT_SHIP_BATCH_SIZE").ok();
+
+        std::env::remove_var("TOPPY_UDP_IDLE_SECS");
+        std::env::remove_var("TOPPY_UDP_MAX_PEERS");
+        std::env::remove_var("TOPPY_AUDIT_SHIP_BATCH_SIZE");
+        assert_eq!(udp_idle_timeout(), Duration::from_secs(60));
+        assert_eq!(udp_max_peers(), 128);
+        assert_eq!(audit_ship_batch_size(None), 100);
+
+        std::env::set_var("TOPPY_UDP_IDLE_SECS", "15");
+        std::env::set_var("TOPPY_UDP_MAX_PEERS", "32");
+        std::env::set_var("TOPPY_AUDIT_SHIP_BATCH_SIZE", "12");
+        assert_eq!(udp_idle_timeout(), Duration::from_secs(15));
+        assert_eq!(udp_max_peers(), 32);
+        assert_eq!(audit_ship_batch_size(None), 12);
+
+        if let Some(value) = prev_idle {
+            std::env::set_var("TOPPY_UDP_IDLE_SECS", value);
+        } else {
+            std::env::remove_var("TOPPY_UDP_IDLE_SECS");
+        }
+        if let Some(value) = prev_max {
+            std::env::set_var("TOPPY_UDP_MAX_PEERS", value);
+        } else {
+            std::env::remove_var("TOPPY_UDP_MAX_PEERS");
+        }
+        if let Some(value) = prev_batch {
+            std::env::set_var("TOPPY_AUDIT_SHIP_BATCH_SIZE", value);
+        } else {
+            std::env::remove_var("TOPPY_AUDIT_SHIP_BATCH_SIZE");
+        }
+    }
+
+    #[test]
     fn proxy_once_relays_bidirectional_traffic() {
         let target_listener = match TcpListener::bind("127.0.0.1:0") {
             Ok(listener) => listener,

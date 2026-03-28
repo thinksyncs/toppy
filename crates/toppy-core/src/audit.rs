@@ -903,4 +903,68 @@ mod tests {
         assert_eq!(message, "remote verified");
         let _ = fs::remove_file(&path);
     }
+
+    #[test]
+    fn verify_chain_remote_rejects_negative_response() {
+        let path = temp_path("remote-verify-fail.jsonl");
+        let _ = fs::remove_file(&path);
+        append_event(
+            &path,
+            1,
+            AuditEvent {
+                actor: "alice".to_string(),
+                action: "doctor".to_string(),
+                target: "cfg".to_string(),
+                allowed: true,
+                auth_subject: Some("user-123".to_string()),
+                reason: None,
+            },
+        )
+        .unwrap();
+
+        let Some(server) = MockAuditServer::start(vec![(
+            200,
+            "{\"verified\":false,\"message\":\"chain mismatch\"}".to_string(),
+        )]) else {
+            return;
+        };
+        let cfg = AuditRemoteVerifyConfig {
+            url: server.url().to_string(),
+            token: None,
+            timeout_secs: 2,
+            retry_attempts: 0,
+            retry_backoff_ms: 0,
+        };
+
+        let err = verify_chain_remote(&path, &cfg).unwrap_err();
+        assert!(err.to_string().contains("chain mismatch"));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_entries_roundtrip_preserves_subject() {
+        let path = temp_path("load-entries.jsonl");
+        let _ = fs::remove_file(&path);
+
+        append_event(
+            &path,
+            1,
+            AuditEvent {
+                actor: "alice".to_string(),
+                action: "udp".to_string(),
+                target: "127.0.0.1:53".to_string(),
+                allowed: true,
+                auth_subject: Some("user-123".to_string()),
+                reason: Some("ok".to_string()),
+            },
+        )
+        .unwrap();
+
+        let entries = load_entries(&path).expect("entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].event.auth_subject.as_deref(), Some("user-123"));
+        assert_eq!(entries[0].event.reason.as_deref(), Some("ok"));
+
+        let _ = fs::remove_file(&path);
+    }
 }

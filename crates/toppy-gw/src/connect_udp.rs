@@ -350,3 +350,83 @@ async fn parse_connect_udp_target(uri: &http::Uri) -> Result<SocketAddr, String>
         .next()
         .ok_or_else(|| format!("dns lookup returned no addresses for {host}:{port}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn connect_udp_mode_uses_forward_prefix() {
+        let forward: http::Uri = "https://example/.well-known/masque/udp-forward/127.0.0.1/53/"
+            .parse()
+            .expect("forward uri");
+        let echo: http::Uri = "https://example/.well-known/masque/udp/127.0.0.1/53/"
+            .parse()
+            .expect("echo uri");
+
+        assert_eq!(ConnectUdpMode::from_uri(&forward), ConnectUdpMode::Forward);
+        assert_eq!(ConnectUdpMode::from_uri(&echo), ConnectUdpMode::Echo);
+    }
+
+    #[test]
+    fn gw_udp_rate_limit_from_env_uses_default_burst() {
+        let _guard = toppy_core::test_support::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev_rate = env::var("TOPPY_GW_UDP_BYTES_PER_SEC").ok();
+        let prev_burst = env::var("TOPPY_GW_UDP_BURST_BYTES").ok();
+        env::set_var("TOPPY_GW_UDP_BYTES_PER_SEC", "2048");
+        env::remove_var("TOPPY_GW_UDP_BURST_BYTES");
+
+        let limit = gw_udp_rate_limit_from_env().expect("limit");
+        assert_eq!(limit.bytes_per_sec, 2048);
+        assert_eq!(limit.burst_bytes, 2048);
+
+        if let Some(value) = prev_rate {
+            env::set_var("TOPPY_GW_UDP_BYTES_PER_SEC", value);
+        } else {
+            env::remove_var("TOPPY_GW_UDP_BYTES_PER_SEC");
+        }
+        if let Some(value) = prev_burst {
+            env::set_var("TOPPY_GW_UDP_BURST_BYTES", value);
+        } else {
+            env::remove_var("TOPPY_GW_UDP_BURST_BYTES");
+        }
+    }
+
+    #[test]
+    fn gw_udp_datagram_allowed_respects_capacity() {
+        let mut bucket = gw_udp_limiter(Some(GwUdpRateLimit {
+            bytes_per_sec: 1,
+            burst_bytes: 3,
+        }));
+        let started_at = Instant::now();
+
+        assert!(gw_udp_datagram_allowed(&mut bucket, 3, started_at));
+        assert!(!gw_udp_datagram_allowed(&mut bucket, 1, started_at));
+    }
+
+    #[tokio::test]
+    async fn parse_connect_udp_target_accepts_socket_addr_fast_path() {
+        let uri: http::Uri = "https://example/.well-known/masque/udp-forward/127.0.0.1/5353/"
+            .parse()
+            .expect("uri");
+
+        let target = parse_connect_udp_target(&uri).await.expect("target");
+        assert_eq!(
+            target,
+            "127.0.0.1:5353".parse::<SocketAddr>().expect("addr")
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_connect_udp_target_rejects_invalid_path() {
+        let uri: http::Uri = "https://example/.well-known/masque/udp/127.0.0.1/5353/"
+            .parse()
+            .expect("uri");
+
+        let err = parse_connect_udp_target(&uri).await.unwrap_err();
+        assert!(err.contains("udp-forward"));
+    }
+}
