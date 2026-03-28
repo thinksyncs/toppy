@@ -5,8 +5,9 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::{Duration, Instant};
 use toppy_core::audit::{
-    append_event_signed, default_audit_log_path, now_unix_ms, ship_entry,
-    verify_chain_with_signing_key, AuditEvent, AuditShipConfig,
+    append_event_signed, default_audit_log_path, load_entries, now_unix_ms, ship_entries,
+    ship_entry, verify_chain_remote, verify_chain_with_signing_key, AuditEvent,
+    AuditRemoteVerifyConfig, AuditShipConfig,
 };
 use toppy_core::auth::{extract_jwt_identity, AuthIdentity};
 use toppy_core::config::{ClientAuthConfig, SessionRateLimit};
@@ -92,6 +93,30 @@ enum AuditCommands {
         #[arg(long)]
         signing_key: Option<String>,
     },
+    /// Ship the local audit log to the configured remote endpoint in batches
+    Ship {
+        /// Path to the audit JSONL file
+        #[arg(long)]
+        path: Option<String>,
+        /// Number of entries per remote request
+        #[arg(long)]
+        batch_size: Option<usize>,
+    },
+    /// Ask a remote endpoint to verify the local audit chain
+    RemoteVerify {
+        /// Path to the audit JSONL file
+        #[arg(long)]
+        path: Option<String>,
+        /// Remote verification URL
+        #[arg(long)]
+        url: Option<String>,
+        /// Bearer token for the remote verification endpoint
+        #[arg(long)]
+        token: Option<String>,
+        /// Timeout in seconds
+        #[arg(long)]
+        timeout_secs: Option<u64>,
+    },
 }
 
 fn audit_log_path_from_env_or_config() -> Option<std::path::PathBuf> {
@@ -134,6 +159,12 @@ fn audit_ship_config_from_env_or_config() -> Option<AuditShipConfig> {
     let env_url = std::env::var("TOPPY_AUDIT_SHIP_URL").ok();
     let env_token = std::env::var("TOPPY_AUDIT_SHIP_TOKEN").ok();
     let env_timeout = std::env::var("TOPPY_AUDIT_SHIP_TIMEOUT")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let env_retries = std::env::var("TOPPY_AUDIT_SHIP_RETRIES")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
+    let env_backoff_ms = std::env::var("TOPPY_AUDIT_SHIP_BACKOFF_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok());
 
@@ -186,7 +217,55 @@ fn audit_ship_config_from_env_or_config() -> Option<AuditShipConfig> {
         url,
         token,
         timeout_secs: timeout_secs.unwrap_or(3),
+        retry_attempts: env_retries.unwrap_or(2),
+        retry_backoff_ms: env_backoff_ms.unwrap_or(250),
     })
+}
+
+fn audit_remote_verify_config(
+    url: Option<String>,
+    token: Option<String>,
+    timeout_secs: Option<u64>,
+) -> Option<AuditRemoteVerifyConfig> {
+    let env_url = std::env::var("TOPPY_AUDIT_VERIFY_URL").ok();
+    let env_token = std::env::var("TOPPY_AUDIT_VERIFY_TOKEN").ok();
+    let env_timeout = std::env::var("TOPPY_AUDIT_VERIFY_TIMEOUT")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let env_retries = std::env::var("TOPPY_AUDIT_VERIFY_RETRIES")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
+    let env_backoff_ms = std::env::var("TOPPY_AUDIT_VERIFY_BACKOFF_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+
+    let url = url
+        .or(env_url)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())?;
+    let token = token
+        .or(env_token)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    Some(AuditRemoteVerifyConfig {
+        url,
+        token,
+        timeout_secs: timeout_secs.or(env_timeout).unwrap_or(5),
+        retry_attempts: env_retries.unwrap_or(2),
+        retry_backoff_ms: env_backoff_ms.unwrap_or(250),
+    })
+}
+
+fn audit_ship_batch_size(default_size: Option<usize>) -> usize {
+    default_size
+        .or_else(|| {
+            std::env::var("TOPPY_AUDIT_SHIP_BATCH_SIZE")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+        })
+        .filter(|value| *value > 0)
+        .unwrap_or(100)
 }
 
 fn current_actor() -> String {
@@ -262,6 +341,13 @@ fn best_effort_auth_identity(cfg: &toppy_core::config::Config) -> AuthIdentity {
     }
 }
 
+fn best_effort_audit_subject() -> Option<String> {
+    toppy_core::config::load_config()
+        .ok()
+        .map(|(cfg, _)| best_effort_auth_identity(&cfg))
+        .and_then(|identity| identity.subject)
+}
+
 fn udp_idle_timeout() -> Duration {
     std::env::var("TOPPY_UDP_IDLE_SECS")
         .ok()
@@ -287,7 +373,11 @@ fn udp_limiter(limit: SessionRateLimit) -> Option<TokenBucket> {
     }
 }
 
-fn udp_datagram_allowed(bucket: &mut Option<TokenBucket>, bytes: usize, started_at: Instant) -> bool {
+fn udp_datagram_allowed(
+    bucket: &mut Option<TokenBucket>,
+    bytes: usize,
+    started_at: Instant,
+) -> bool {
     match bucket.as_mut() {
         Some(bucket) => bucket.try_take(bytes as u64, started_at.elapsed()),
         None => true,
@@ -451,10 +541,7 @@ fn main() {
         Some(Commands::Doctor { json }) => {
             // Invoke the doctor checks from toppy_core and print JSON
             let report = toppy_core::doctor::doctor_check();
-            let auth_subject = toppy_core::config::load_config()
-                .ok()
-                .map(|(cfg, _)| best_effort_auth_identity(&cfg))
-                .and_then(|identity| identity.subject);
+            let auth_subject = best_effort_audit_subject();
             // Best-effort audit log: record the overall outcome.
             try_audit_event_with_subject(
                 "doctor",
@@ -1297,39 +1384,135 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Some(Commands::Audit { command }) => match command {
-            AuditCommands::Verify { path, signing_key } => {
-                let path = path
-                    .map(std::path::PathBuf::from)
-                    .or_else(audit_log_path_from_env_or_config)
-                    .unwrap_or_else(default_audit_log_path);
-                let signing_key = signing_key
-                    .map(|value| value.into_bytes())
-                    .or_else(audit_signing_key_from_env_or_config);
-                match verify_chain_with_signing_key(&path, signing_key.as_deref()) {
-                    Ok(()) => {
-                        println!("audit ok: {}", path.display());
-                        try_audit_event(
-                            "audit.verify",
-                            &path.display().to_string(),
-                            true,
-                            Some("ok".to_string()),
-                        );
-                        std::process::exit(0);
+        Some(Commands::Audit { command }) => {
+            match command {
+                AuditCommands::Verify { path, signing_key } => {
+                    let path = path
+                        .map(std::path::PathBuf::from)
+                        .or_else(audit_log_path_from_env_or_config)
+                        .unwrap_or_else(default_audit_log_path);
+                    let signing_key = signing_key
+                        .map(|value| value.into_bytes())
+                        .or_else(audit_signing_key_from_env_or_config);
+                    match verify_chain_with_signing_key(&path, signing_key.as_deref()) {
+                        Ok(()) => {
+                            println!("audit ok: {}", path.display());
+                            try_audit_event(
+                                "audit.verify",
+                                &path.display().to_string(),
+                                true,
+                                Some("ok".to_string()),
+                            );
+                            std::process::exit(0);
+                        }
+                        Err(err) => {
+                            eprintln!("audit invalid: {}: {}", path.display(), err);
+                            try_audit_event(
+                                "audit.verify",
+                                &path.display().to_string(),
+                                false,
+                                Some(format!("invalid: {}", err)),
+                            );
+                            std::process::exit(1);
+                        }
                     }
-                    Err(err) => {
-                        eprintln!("audit invalid: {}: {}", path.display(), err);
-                        try_audit_event(
-                            "audit.verify",
-                            &path.display().to_string(),
-                            false,
-                            Some(format!("invalid: {}", err)),
-                        );
-                        std::process::exit(1);
+                }
+                AuditCommands::Ship { path, batch_size } => {
+                    let path = path
+                        .map(std::path::PathBuf::from)
+                        .or_else(audit_log_path_from_env_or_config)
+                        .unwrap_or_else(default_audit_log_path);
+                    let cfg = match audit_ship_config_from_env_or_config() {
+                        Some(cfg) => cfg,
+                        None => {
+                            eprintln!("audit ship config missing: set TOPPY_AUDIT_SHIP_URL or audit_ship_url");
+                            std::process::exit(2);
+                        }
+                    };
+                    let entries = match load_entries(&path) {
+                        Ok(entries) => entries,
+                        Err(err) => {
+                            eprintln!("audit read failed: {}: {}", path.display(), err);
+                            try_audit_event_with_subject(
+                                "audit.ship",
+                                &path.display().to_string(),
+                                false,
+                                Some(format!("read failed: {}", err)),
+                                best_effort_audit_subject(),
+                            );
+                            std::process::exit(1);
+                        }
+                    };
+                    let batch_size = audit_ship_batch_size(batch_size);
+                    let mut shipped = 0usize;
+                    for chunk in entries.chunks(batch_size) {
+                        if let Err(err) = ship_entries(chunk, &cfg) {
+                            eprintln!("audit ship failed: {}: {}", path.display(), err);
+                            try_audit_event_with_subject(
+                                "audit.ship",
+                                &path.display().to_string(),
+                                false,
+                                Some(format!("ship failed: {}", err)),
+                                best_effort_audit_subject(),
+                            );
+                            std::process::exit(1);
+                        }
+                        shipped += chunk.len();
+                    }
+                    println!("audit shipped: {} entries from {}", shipped, path.display());
+                    try_audit_event_with_subject(
+                        "audit.ship",
+                        &path.display().to_string(),
+                        true,
+                        Some(format!("shipped={} batch_size={}", shipped, batch_size)),
+                        best_effort_audit_subject(),
+                    );
+                    std::process::exit(0);
+                }
+                AuditCommands::RemoteVerify {
+                    path,
+                    url,
+                    token,
+                    timeout_secs,
+                } => {
+                    let path = path
+                        .map(std::path::PathBuf::from)
+                        .or_else(audit_log_path_from_env_or_config)
+                        .unwrap_or_else(default_audit_log_path);
+                    let cfg = match audit_remote_verify_config(url, token, timeout_secs) {
+                        Some(cfg) => cfg,
+                        None => {
+                            eprintln!("audit remote-verify config missing: set --url or TOPPY_AUDIT_VERIFY_URL");
+                            std::process::exit(2);
+                        }
+                    };
+                    match verify_chain_remote(&path, &cfg) {
+                        Ok(message) => {
+                            println!("audit remote verify ok: {} ({})", path.display(), message);
+                            try_audit_event_with_subject(
+                                "audit.remote_verify",
+                                &path.display().to_string(),
+                                true,
+                                Some(message),
+                                best_effort_audit_subject(),
+                            );
+                            std::process::exit(0);
+                        }
+                        Err(err) => {
+                            eprintln!("audit remote verify failed: {}: {}", path.display(), err);
+                            try_audit_event_with_subject(
+                                "audit.remote_verify",
+                                &path.display().to_string(),
+                                false,
+                                Some(format!("remote verify failed: {}", err)),
+                                best_effort_audit_subject(),
+                            );
+                            std::process::exit(1);
+                        }
                     }
                 }
             }
-        },
+        }
         None => {
             println!("No subcommand provided. Try `toppy doctor`.");
         }
@@ -1339,25 +1522,34 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::ErrorKind;
     use std::net::Shutdown;
 
     #[test]
     fn proxy_once_relays_bidirectional_traffic() {
-        let target_listener = TcpListener::bind("127.0.0.1:0").expect("bind target listener");
+        let target_listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => return,
+            Err(err) => panic!("bind target listener: {}", err),
+        };
         let target_addr = target_listener.local_addr().expect("target addr");
         let target_thread = thread::spawn(move || {
             let (mut socket, _) = target_listener.accept().expect("accept target connection");
             let mut buf = [0u8; 64];
             let n = socket.read(&mut buf).expect("read relayed payload");
-            socket
-                .write_all(&buf[..n])
-                .expect("write echoed payload");
+            socket.write_all(&buf[..n]).expect("write echoed payload");
         });
 
-        let inbound_listener = TcpListener::bind("127.0.0.1:0").expect("bind inbound listener");
+        let inbound_listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => return,
+            Err(err) => panic!("bind inbound listener: {}", err),
+        };
         let inbound_addr = inbound_listener.local_addr().expect("inbound addr");
         let proxy_thread = thread::spawn(move || {
-            let (inbound, _) = inbound_listener.accept().expect("accept inbound connection");
+            let (inbound, _) = inbound_listener
+                .accept()
+                .expect("accept inbound connection");
             proxy_once(inbound, target_addr, SessionRateLimit::disabled())
                 .expect("proxy once should relay traffic");
         });
@@ -1365,7 +1557,9 @@ mod tests {
         let payload = b"hello over once";
         let mut client = TcpStream::connect(inbound_addr).expect("connect to proxy");
         client.write_all(payload).expect("write request");
-        client.shutdown(Shutdown::Write).expect("shutdown client write");
+        client
+            .shutdown(Shutdown::Write)
+            .expect("shutdown client write");
 
         let mut echoed = vec![0u8; payload.len()];
         client.read_exact(&mut echoed).expect("read echoed reply");

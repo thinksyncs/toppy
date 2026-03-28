@@ -5,6 +5,7 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -334,32 +335,156 @@ pub struct AuditShipConfig {
     pub url: String,
     pub token: Option<String>,
     pub timeout_secs: u64,
+    pub retry_attempts: u32,
+    pub retry_backoff_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuditRemoteVerifyConfig {
+    pub url: String,
+    pub token: Option<String>,
+    pub timeout_secs: u64,
+    pub retry_attempts: u32,
+    pub retry_backoff_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuditRemoteVerifyResponse {
+    verified: Option<bool>,
+    ok: Option<bool>,
+    message: Option<String>,
+}
+
+pub fn load_entries(path: impl AsRef<Path>) -> Result<Vec<AuditEntry>, AuditError> {
+    let file = File::open(path.as_ref())?;
+    let reader = BufReader::new(file);
+    let mut entries = Vec::new();
+
+    for line_res in reader.lines() {
+        let line = line_res?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        entries.push(serde_json::from_str(&line)?);
+    }
+
+    Ok(entries)
 }
 
 pub fn ship_entry(entry: &AuditEntry, cfg: &AuditShipConfig) -> Result<(), AuditError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(cfg.timeout_secs))
-        .build()
-        .map_err(|e| AuditError::Ship(format!("failed to build HTTP client: {}", e)))?;
+    with_retry(cfg.retry_attempts, cfg.retry_backoff_ms, || {
+        let client = audit_http_client(cfg.timeout_secs)?;
+        let response = audit_post_json(&client, &cfg.url, cfg.token.as_deref(), entry)
+            .map_err(|e| AuditError::Ship(format!("failed to ship audit entry: {}", e)))?;
+        handle_audit_http_response("ship failed", response)
+    })
+}
 
-    let mut request = client.post(&cfg.url).json(entry);
-    if let Some(token) = cfg.token.as_ref() {
+pub fn ship_entries(entries: &[AuditEntry], cfg: &AuditShipConfig) -> Result<(), AuditError> {
+    with_retry(cfg.retry_attempts, cfg.retry_backoff_ms, || {
+        let client = audit_http_client(cfg.timeout_secs)?;
+        let response = audit_post_json(&client, &cfg.url, cfg.token.as_deref(), entries)
+            .map_err(|e| AuditError::Ship(format!("failed to ship audit batch: {}", e)))?;
+        handle_audit_http_response("batch ship failed", response)
+    })
+}
+
+pub fn verify_chain_remote(
+    path: impl AsRef<Path>,
+    cfg: &AuditRemoteVerifyConfig,
+) -> Result<String, AuditError> {
+    let entries = load_entries(path)?;
+    with_retry(cfg.retry_attempts, cfg.retry_backoff_ms, || {
+        let client = audit_http_client(cfg.timeout_secs)?;
+        let response = audit_post_json(&client, &cfg.url, cfg.token.as_deref(), &entries)
+            .map_err(|e| AuditError::Ship(format!("failed to request remote verify: {}", e)))?;
+        let status = response.status();
+        let body = response.text().map_err(|e| {
+            AuditError::Ship(format!("failed to read remote verify response: {}", e))
+        })?;
+        if !status.is_success() {
+            return Err(AuditError::Ship(format!(
+                "remote verify failed: {} {}",
+                status,
+                body.trim()
+            )));
+        }
+        if body.trim().is_empty() {
+            return Ok("remote verify ok".to_string());
+        }
+        if let Ok(parsed) = serde_json::from_str::<AuditRemoteVerifyResponse>(&body) {
+            if parsed.verified == Some(false) || parsed.ok == Some(false) {
+                return Err(AuditError::Ship(parsed.message.unwrap_or_else(|| {
+                    "remote verify rejected the audit chain".to_string()
+                })));
+            }
+            return Ok(parsed
+                .message
+                .unwrap_or_else(|| "remote verify ok".to_string()));
+        }
+        Ok(body.trim().to_string())
+    })
+}
+
+fn audit_http_client(timeout_secs: u64) -> Result<reqwest::blocking::Client, AuditError> {
+    reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| AuditError::Ship(format!("failed to build HTTP client: {}", e)))
+}
+
+fn audit_post_json<T: Serialize + ?Sized>(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    token: Option<&str>,
+    payload: &T,
+) -> Result<reqwest::blocking::Response, reqwest::Error> {
+    let mut request = client.post(url).json(payload);
+    if let Some(token) = token {
         request = request.bearer_auth(token);
     }
+    request.send()
+}
 
-    let response = request
-        .send()
-        .map_err(|e| AuditError::Ship(format!("failed to ship audit entry: {}", e)))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        return Err(AuditError::Ship(format!(
-            "ship failed: {} {}",
-            status,
-            body.trim()
-        )));
+fn handle_audit_http_response(
+    prefix: &str,
+    response: reqwest::blocking::Response,
+) -> Result<(), AuditError> {
+    if response.status().is_success() {
+        return Ok(());
     }
-    Ok(())
+    let status = response.status();
+    let body = response.text().unwrap_or_default();
+    Err(AuditError::Ship(format!(
+        "{}: {} {}",
+        prefix,
+        status,
+        body.trim()
+    )))
+}
+
+fn with_retry<T, F>(retry_attempts: u32, retry_backoff_ms: u64, mut f: F) -> Result<T, AuditError>
+where
+    F: FnMut() -> Result<T, AuditError>,
+{
+    let mut last_err = None;
+    for attempt in 0..=retry_attempts {
+        match f() {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                last_err = Some(err);
+                if attempt == retry_attempts {
+                    break;
+                }
+                let multiplier = 1u64 << attempt.min(10);
+                let delay = retry_backoff_ms.saturating_mul(multiplier);
+                if delay > 0 {
+                    thread::sleep(Duration::from_millis(delay));
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| AuditError::Ship("retry exhausted".to_string())))
 }
 
 fn read_last_entry(path: &Path) -> Result<Option<AuditEntry>, AuditError> {
@@ -382,11 +507,126 @@ fn read_last_entry(path: &Path) -> Result<Option<AuditEntry>, AuditError> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::ErrorKind;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
     fn temp_path(name: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
         p.push(format!("toppy-audit-{}-{}", name, std::process::id()));
         p
+    }
+
+    #[derive(Default)]
+    struct MockAuditServerState {
+        responses: Vec<(u16, String)>,
+        bodies: Vec<String>,
+    }
+
+    struct MockAuditServer {
+        addr: String,
+        state: Arc<Mutex<MockAuditServerState>>,
+    }
+
+    impl MockAuditServer {
+        fn start(responses: Vec<(u16, String)>) -> Option<Self> {
+            let listener = match TcpListener::bind("127.0.0.1:0") {
+                Ok(listener) => listener,
+                Err(err) if err.kind() == ErrorKind::PermissionDenied => return None,
+                Err(err) => panic!("bind mock audit server: {}", err),
+            };
+            let addr = listener.local_addr().expect("addr");
+            let state = Arc::new(Mutex::new(MockAuditServerState {
+                responses,
+                bodies: Vec::new(),
+            }));
+            let state_clone = Arc::clone(&state);
+
+            thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = match stream {
+                        Ok(stream) => stream,
+                        Err(_) => break,
+                    };
+                    handle_mock_audit_request(&mut stream, &state_clone);
+                }
+            });
+
+            Some(Self {
+                addr: format!("http://{}", addr),
+                state,
+            })
+        }
+
+        fn url(&self) -> &str {
+            &self.addr
+        }
+
+        fn bodies(&self) -> Vec<String> {
+            self.state.lock().expect("state").bodies.clone()
+        }
+    }
+
+    fn handle_mock_audit_request(stream: &mut TcpStream, state: &Arc<Mutex<MockAuditServerState>>) {
+        let mut buf = Vec::new();
+        let mut temp = [0u8; 1024];
+        let mut header_end = None;
+
+        loop {
+            let n = stream.read(&mut temp).expect("read request");
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&temp[..n]);
+            if let Some(idx) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_end = Some(idx + 4);
+                break;
+            }
+        }
+
+        let header_end = header_end.expect("header end");
+        let headers = String::from_utf8_lossy(&buf[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower
+                    .strip_prefix("content-length: ")
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+            })
+            .unwrap_or(0);
+        let mut body = buf[header_end..].to_vec();
+        while body.len() < content_length {
+            let n = stream.read(&mut temp).expect("read body");
+            if n == 0 {
+                break;
+            }
+            body.extend_from_slice(&temp[..n]);
+        }
+
+        let body = String::from_utf8_lossy(&body[..content_length]).to_string();
+        let (status, response_body) = {
+            let mut guard = state.lock().expect("state");
+            guard.bodies.push(body);
+            if guard.responses.is_empty() {
+                (200, "{\"ok\":true}".to_string())
+            } else {
+                guard.responses.remove(0)
+            }
+        };
+
+        let response = format!(
+            "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+            status,
+            if status == 200 { "OK" } else { "ERR" },
+            response_body.len(),
+            response_body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
     }
 
     #[test]
@@ -536,6 +776,131 @@ mod tests {
         assert!(verify_chain_with_signing_key(&path, None).is_err());
         assert!(verify_chain_with_signing_key(&path, Some(b"wrong")).is_err());
 
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ship_entry_retries_and_succeeds() {
+        let Some(server) = MockAuditServer::start(vec![
+            (500, "{\"ok\":false}".to_string()),
+            (200, "{\"ok\":true}".to_string()),
+        ]) else {
+            return;
+        };
+        let entry = AuditEntry {
+            version: 1,
+            seq: 1,
+            unix_ms: 1,
+            event: AuditEvent {
+                actor: "alice".to_string(),
+                action: "doctor".to_string(),
+                target: "cfg".to_string(),
+                allowed: true,
+                auth_subject: Some("user-123".to_string()),
+                reason: None,
+            },
+            prev_hash: None,
+            hash: "hash".to_string(),
+            signature: None,
+        };
+        let cfg = AuditShipConfig {
+            url: server.url().to_string(),
+            token: None,
+            timeout_secs: 2,
+            retry_attempts: 1,
+            retry_backoff_ms: 1,
+        };
+
+        ship_entry(&entry, &cfg).expect("ship entry");
+        assert_eq!(server.bodies().len(), 2);
+    }
+
+    #[test]
+    fn ship_entries_sends_json_array() {
+        let Some(server) = MockAuditServer::start(vec![(200, "{\"ok\":true}".to_string())]) else {
+            return;
+        };
+        let entries = vec![
+            AuditEntry {
+                version: 1,
+                seq: 1,
+                unix_ms: 1,
+                event: AuditEvent {
+                    actor: "alice".to_string(),
+                    action: "doctor".to_string(),
+                    target: "cfg".to_string(),
+                    allowed: true,
+                    auth_subject: None,
+                    reason: None,
+                },
+                prev_hash: None,
+                hash: "hash-1".to_string(),
+                signature: None,
+            },
+            AuditEntry {
+                version: 1,
+                seq: 2,
+                unix_ms: 2,
+                event: AuditEvent {
+                    actor: "alice".to_string(),
+                    action: "up".to_string(),
+                    target: "127.0.0.1:22".to_string(),
+                    allowed: true,
+                    auth_subject: None,
+                    reason: None,
+                },
+                prev_hash: Some("hash-1".to_string()),
+                hash: "hash-2".to_string(),
+                signature: None,
+            },
+        ];
+        let cfg = AuditShipConfig {
+            url: server.url().to_string(),
+            token: None,
+            timeout_secs: 2,
+            retry_attempts: 0,
+            retry_backoff_ms: 0,
+        };
+
+        ship_entries(&entries, &cfg).expect("ship entries");
+        let body = server.bodies().pop().expect("body");
+        assert!(body.starts_with('['));
+    }
+
+    #[test]
+    fn verify_chain_remote_accepts_verified_response() {
+        let path = temp_path("remote-verify.jsonl");
+        let _ = fs::remove_file(&path);
+        append_event(
+            &path,
+            1,
+            AuditEvent {
+                actor: "alice".to_string(),
+                action: "doctor".to_string(),
+                target: "cfg".to_string(),
+                allowed: true,
+                auth_subject: Some("user-123".to_string()),
+                reason: None,
+            },
+        )
+        .unwrap();
+
+        let Some(server) = MockAuditServer::start(vec![(
+            200,
+            "{\"verified\":true,\"message\":\"remote verified\"}".to_string(),
+        )]) else {
+            return;
+        };
+        let cfg = AuditRemoteVerifyConfig {
+            url: server.url().to_string(),
+            token: None,
+            timeout_secs: 2,
+            retry_attempts: 0,
+            retry_backoff_ms: 0,
+        };
+
+        let message = verify_chain_remote(&path, &cfg).expect("remote verify");
+        assert_eq!(message, "remote verified");
         let _ = fs::remove_file(&path);
     }
 }
