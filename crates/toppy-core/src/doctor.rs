@@ -6,6 +6,7 @@
 //! the result. The overall status is aggregated across all checks.
 
 use crate::config;
+use crate::auth::{extract_jwt_identity, AuthIdentity};
 use crate::policy::{Decision, Policy, Target};
 use bytes::{Buf, Bytes};
 use h3::ext::Protocol;
@@ -192,15 +193,21 @@ fn mtu_sanity_check(mtu: Option<u16>) -> DoctorCheck {
     }
 }
 
-fn parse_policy_target(value: &str) -> Result<Target, String> {
+fn auth_identity_from_token(token: Option<&str>) -> AuthIdentity {
+    token
+        .and_then(|value| extract_jwt_identity(value).ok())
+        .unwrap_or_default()
+}
+
+fn parse_policy_target(value: &str, auth_identity: AuthIdentity) -> Result<Target, String> {
     let addr: SocketAddr = value
         .parse()
         .map_err(|e| format!("invalid target {}: {}", value, e))?;
     Ok(Target {
         ip: addr.ip(),
         port: addr.port(),
-        subject: None,
-        claims: std::collections::BTreeMap::new(),
+        subject: auth_identity.subject,
+        claims: auth_identity.claims,
     })
 }
 
@@ -763,7 +770,12 @@ pub fn doctor_check() -> DoctorReport {
 
     if let Ok(target_spec) = env::var("TOPPY_DOCTOR_TARGET") {
         match &cfg_res {
-            Ok((cfg, _)) => match parse_policy_target(&target_spec) {
+            Ok((cfg, _)) => {
+                let auth_identity = match cfg.resolve_auth_token() {
+                    Ok(Some(token)) => auth_identity_from_token(Some(&token)),
+                    _ => AuthIdentity::default(),
+                };
+                match parse_policy_target(&target_spec, auth_identity) {
                 Ok(target) => match cfg.policy.as_ref() {
                     Some(policy_cfg) => match Policy::from_config(policy_cfg) {
                         Ok(policy) => match policy.evaluate(&target) {
@@ -783,6 +795,7 @@ pub fn doctor_check() -> DoctorReport {
                 Err(err) => {
                     checks.push(mk("policy.denied", "fail", err));
                 }
+            }
             },
             Err(_) => checks.push(mk(
                 "policy.denied",

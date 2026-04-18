@@ -5,6 +5,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use jsonwebtoken::{encode, EncodingKey, Header};
+use serde::Serialize;
 use toppy_core::doctor::doctor_check;
 
 fn unique_temp_path(prefix: &str) -> PathBuf {
@@ -34,6 +36,33 @@ mtu = 1350
   cidr = "127.0.0.1/32"
   ports = [2222]
 "#;
+    fs::write(path, data).expect("write config");
+}
+
+#[derive(Debug, Serialize)]
+struct TestJwtClaims<'a> {
+    sub: &'a str,
+    role: &'a str,
+    exp: usize,
+}
+
+fn write_config_with_auth_policy(path: &PathBuf, token: &str) {
+    let data = format!(
+        r#"gateway = "127.0.0.1"
+port = 4433
+mtu = 1350
+auth_token = "{token}"
+
+[policy]
+  [[policy.allow]]
+  cidr = "127.0.0.1/32"
+  ports = [2222]
+  subjects = ["user-123"]
+
+  [policy.allow.claims]
+  role = ["admin"]
+"#
+    );
     fs::write(path, data).expect("write config");
 }
 
@@ -184,6 +213,62 @@ fn doctor_reports_policy_denied_reason() {
     let policy_check = policy_check.expect("policy.denied");
     assert_eq!(policy_check.status, "fail");
     assert!(policy_check.summary.contains("not allowed"));
+
+    if let Some(value) = prev {
+        env::set_var("TOPPY_CONFIG", value);
+    } else {
+        env::remove_var("TOPPY_CONFIG");
+    }
+    if let Some(value) = prev_net {
+        env::set_var("TOPPY_DOCTOR_NET", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_NET");
+    }
+    if let Some(value) = prev_tun {
+        env::set_var("TOPPY_DOCTOR_TUN", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_TUN");
+    }
+    if let Some(value) = prev_target {
+        env::set_var("TOPPY_DOCTOR_TARGET", value);
+    } else {
+        env::remove_var("TOPPY_DOCTOR_TARGET");
+    }
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn doctor_policy_check_uses_auth_subject_and_claims() {
+    let _guard = toppy_core::test_support::ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let path = unique_temp_path("doctor-policy-auth");
+    let token = encode(
+        &Header::default(),
+        &TestJwtClaims {
+            sub: "user-123",
+            role: "admin",
+            exp: usize::MAX / 2,
+        },
+        &EncodingKey::from_secret(b"doctor-test"),
+    )
+    .expect("encode token");
+    write_config_with_auth_policy(&path, &token);
+    let prev = env::var("TOPPY_CONFIG").ok();
+    let prev_net = env::var("TOPPY_DOCTOR_NET").ok();
+    let prev_tun = env::var("TOPPY_DOCTOR_TUN").ok();
+    let prev_target = env::var("TOPPY_DOCTOR_TARGET").ok();
+    env::set_var("TOPPY_CONFIG", &path);
+    env::set_var("TOPPY_DOCTOR_NET", "skip");
+    env::set_var("TOPPY_DOCTOR_TUN", "pass");
+    env::set_var("TOPPY_DOCTOR_TARGET", "127.0.0.1:2222");
+
+    let report = doctor_check();
+    let policy_check = report.checks.iter().find(|c| c.id == "policy.denied");
+    assert!(policy_check.is_some());
+    let policy_check = policy_check.expect("policy.denied");
+    assert_eq!(policy_check.status, "pass");
+    assert!(policy_check.summary.contains("allowed"));
 
     if let Some(value) = prev {
         env::set_var("TOPPY_CONFIG", value);
