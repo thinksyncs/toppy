@@ -5,33 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Toppy Fundamentals Quiz (EN/JP) | ToppyMicroServices</title>
   <meta name="description" content="Bilingual (EN/JP) quiz on QUIC, HTTP/3, CONNECT-UDP, and toppy architecture." />
-  <link rel="canonical" href="https://toppymicros.com/education/quiz_template_skeleton.html" />
+  <link rel="canonical" href="https://thinksyncs.github.io/toppy/quiz_template_skeleton.html" />
 
-  <!-- Icons -->
-  <link rel="icon" href="https://www.toppymicros.com/favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="https://www.toppymicros.com/favicon-32.png" sizes="32x32">
-  <link rel="apple-touch-icon" href="https://www.toppymicros.com/apple-touch-icon.png" sizes="180x180">
-  
-  <!-- 
-  <link rel="icon" href="/favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
-  -->
+  <link rel="icon" type="image/svg+xml" href="brand-mark.svg">
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Toppy Fundamentals Quiz (EN/JP)" />
   <meta property="og:description" content="Check knowledge of QUIC, HTTP/3, CONNECT-UDP, and toppy structure." />
-  <meta property="og:url" content="https://toppymicros.com/education/quiz_template_skeleton.html" />
-  <meta property="og:image" content="https://toppymicros.com/og-brand-clean.png" />
+  <meta property="og:url" content="https://thinksyncs.github.io/toppy/quiz_template_skeleton.html" />
+  <meta property="og:image" content="https://thinksyncs.github.io/toppy/brand-mark.svg" />
   <meta property="og:site_name" content="ToppyMicroServices" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Toppy Fundamentals Quiz (EN/JP)" />
   <meta name="twitter:description" content="Bilingual quiz on QUIC, HTTP/3, CONNECT-UDP, and toppy structure." />
-  <meta name="twitter:image" content="https://toppymicros.com/og-brand-clean.png" />
+  <meta name="twitter:image" content="https://thinksyncs.github.io/toppy/brand-mark.svg" />
   <link rel="stylesheet" href="quiz.css" />
-  <script defer data-domain="toppymicros.com" data-auto="false" src="https://plausible.io/js/script.tag"></script>
-  <script defer src="../assets/global.js"></script>
 </head>
-<body data-theme="light">
+<body id="top" data-theme="light">
   <script>
     window.DRILL_SETTINGS = {
       SKILL_NAME: "Toppy Fundamentals Quiz",
@@ -51,16 +40,16 @@
       },
       LEARNING_MODE_DEFAULT: true,
       BRAND_NAME: "ToppyMicroServices",
-      BRAND_LOGO: "og-brand-clean.min.png",
-      BRAND_URL: "../index.html"
+      BRAND_LOGO: "brand-mark.svg",
+      BRAND_URL: "index.html"
     };
   </script>
   <div class="container">
     <header>
       <div>
         <div class="brand">
-          <a id="brand-link" href="../index.html" aria-label="Home">
-            <img id="brand-logo" alt="ToppyMicroServices logo" src="og-brand-clean.min.png" width="40" height="40" style="display:inline-block">
+          <a id="brand-link" href="index.html" aria-label="Home">
+            <img id="brand-logo" alt="ToppyMicroServices logo" src="brand-mark.svg" width="40" height="40" style="display:inline-block">
             <span id="brand-name" class="name">ToppyMicroServices</span>
           </a>
         </div>
@@ -74,7 +63,7 @@
         </h2>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button type="button" class="theme-toggle" id="themeToggle" aria-pressed="false">🌞 Light</button>
+        <button type="button" class="theme-toggle" id="themeToggle" aria-pressed="false">🌙 Dark</button>
         <button type="button" class="badge clickable" id="langToggle" aria-pressed="false" title="Switch language">日本語</button>
         <button type="button" class="badge clickable" id="mode-badge" aria-live="polite" aria-pressed="true" title="Toggle learning/test mode">Learning Mode</button>
         <span id="score-badge" aria-live="polite" title="Live Score">0 / 0</span>
@@ -915,7 +904,7 @@
       };
     };
     const THEME_KEY='quizTheme'; const prefersDark=window.matchMedia('(prefers-color-scheme: dark)');
-    function updateThemeToggle(mode){const b=$('#themeToggle'); if(!b) return; const L=mode==='light'; const ui=getUiText(); b.textContent=L?ui.themeToDark:ui.themeToLight; b.setAttribute('aria-pressed',L?'true':'false');}
+    function updateThemeToggle(mode){const b=$('#themeToggle'); if(!b) return; const L=mode==='light'; const ui=getUiText(); b.textContent=L?ui.themeToDark:ui.themeToLight; b.setAttribute('aria-pressed',L?'false':'true');}
     function setTheme(m,persist=true){const n=m==='light'?'light':'dark'; document.body.setAttribute('data-theme',n); if(persist){try{localStorage.setItem(THEME_KEY,n);}catch(e){}} updateThemeToggle(n);}    
     function applyInitialTheme(){let s=null; try{s=localStorage.getItem(THEME_KEY);}catch(e){} const init=s||(prefersDark.matches?'dark':'light'); setTheme(init,false);}    
     function toggleTheme(){const c=document.body.getAttribute('data-theme')==='light'?'light':'dark'; setTheme(c==='light'?'dark':'light',true);}    
