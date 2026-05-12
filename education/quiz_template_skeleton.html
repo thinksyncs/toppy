@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Toppy Fundamentals Quiz (EN/JP) | ToppyMicroServices</title>
   <meta name="description" content="Bilingual (EN/JP) quiz on QUIC, HTTP/3, CONNECT-UDP, and toppy architecture." />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; connect-src 'none'; form-action 'none'; img-src 'self' data:; media-src 'none'; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; upgrade-insecure-requests" />
+  <meta name="referrer" content="no-referrer" />
   <link rel="canonical" href="https://thinksyncs.github.io/toppy/quiz_template_skeleton.html" />
 
   <link rel="icon" type="image/svg+xml" href="brand-mark.svg">
@@ -867,8 +869,33 @@
   <script>
   (function(){
     const $=(s,r=document)=>r.querySelector(s); const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
-    const ESCAPE_MAP={"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"};
-    const escapeHtml=str=>(str??'').replace(/[&<>"']/g,ch=>ESCAPE_MAP[ch]||ch);
+    const sanitizeText=(value,max=180)=>String(value??'').replace(/[\u0000-\u001F\u007F]/g,'').slice(0,max);
+    const SAFE_LOCAL_URL=/^(?:[A-Za-z0-9._~-]+\/)*[A-Za-z0-9._~-]+(?:#[A-Za-z0-9_-]+)?$/;
+    function sanitizeLocalUrl(value,fallback='index.html'){
+      const raw=String(value??'').trim();
+      if(!raw||raw.length>240||raw.includes('\\')||raw.includes(':')||raw.includes('..')||raw.startsWith('/')||raw.startsWith('//')) return fallback;
+      return SAFE_LOCAL_URL.test(raw)?raw:fallback;
+    }
+    function sanitizeAssetUrl(value,fallback='brand-mark.svg'){
+      const safe=sanitizeLocalUrl(value,fallback);
+      return /\.(?:svg|png|jpe?g|webp|gif|ico)(?:#[A-Za-z0-9_-]+)?$/i.test(safe)?safe:fallback;
+    }
+    const cssEscape=window.CSS&&CSS.escape?CSS.escape:(value)=>String(value).replace(/["\\]/g,'\\$&');
+    function clearNode(node){ if(node) node.replaceChildren(); }
+    function textNode(value){ return document.createTextNode(String(value??'')); }
+    function makeEl(tag,className){ const node=document.createElement(tag); if(className) node.className=className; return node; }
+    function appendMultilineText(parent,value){
+      String(value??'').split(/\r?\n/).forEach((line,index)=>{
+        if(index) parent.appendChild(document.createElement('br'));
+        parent.appendChild(textNode(line));
+      });
+    }
+    function appendCell(row,...children){
+      const cell=document.createElement('td');
+      children.forEach(child=>cell.appendChild(typeof child==='string'?textNode(child):child));
+      row.appendChild(cell);
+      return cell;
+    }
     const LANG_KEY='quizLang';
     const getLocale=()=>((document.documentElement.lang||'').toLowerCase());
     const normalizeLang=lang=>{const v=(lang||'').toLowerCase(); if(v.startsWith('ja')) return 'ja'; if(v.startsWith('en')) return 'en'; return 'en';};
@@ -909,16 +936,21 @@
     function applyInitialTheme(){let s=null; try{s=localStorage.getItem(THEME_KEY);}catch(e){} const init=s||(prefersDark.matches?'dark':'light'); setTheme(init,false);}    
     function toggleTheme(){const c=document.body.getAttribute('data-theme')==='light'?'light':'dark'; setTheme(c==='light'?'dark':'light',true);}    
     function formatTitle(name,sub){ if(name&&sub) return name+' — '+sub; return name||sub||''; }
-    function getSettingsText(lang){const S=window.DRILL_SETTINGS||{}; const i18n=S.I18N||{}; const entry=i18n[lang]||{}; return { name: entry.SKILL_NAME??S.SKILL_NAME??'', sub: entry.SKILL_SUBTITLE??S.SKILL_SUBTITLE??'', goal: entry.GOAL_DESCRIPTION??S.GOAL_DESCRIPTION??''};}
+    function getSettingsText(lang){const S=window.DRILL_SETTINGS||{}; const i18n=S.I18N||{}; const entry=i18n[lang]||{}; return { name: sanitizeText(entry.SKILL_NAME??S.SKILL_NAME??'',120), sub: sanitizeText(entry.SKILL_SUBTITLE??S.SKILL_SUBTITLE??'',120), goal: sanitizeText(entry.GOAL_DESCRIPTION??S.GOAL_DESCRIPTION??'',180)};}
     function applySettings(){
       const S=window.DRILL_SETTINGS||{}; const currentLang=normalizeLang(getLocale()); const current=getSettingsText(currentLang); const en=getSettingsText('en'); const ja=getSettingsText('ja');
+      const brandName=sanitizeText(S.BRAND_NAME||'',80);
       const titleEn=$('#title-en'); const titleJa=$('#title-ja'); const subtitleEn=$('#subtitle-en'); const subtitleJa=$('#subtitle-ja');
       if(titleEn||titleJa){ if(titleEn) titleEn.textContent=formatTitle(en.name,en.sub); if(titleJa) titleJa.textContent=formatTitle(ja.name,ja.sub); } else { $('#title').textContent=formatTitle(current.name,current.sub); }
       if(subtitleEn||subtitleJa){ if(subtitleEn) subtitleEn.textContent=en.goal||''; if(subtitleJa) subtitleJa.textContent=ja.goal||''; } else { $('#subtitle').textContent=current.goal||''; }
       const footerSkillEn=$('#footer-skill-en'); const footerSkillJa=$('#footer-skill-ja'); const footerGoalEn=$('#footer-goal-en'); const footerGoalJa=$('#footer-goal-ja');
       if(footerSkillEn||footerSkillJa){ if(footerSkillEn) footerSkillEn.textContent=en.name||'Skill'; if(footerSkillJa) footerSkillJa.textContent=ja.name||en.name||'Skill'; } else { $('#footer-skill').textContent=current.name||'Skill'; }
       if(footerGoalEn||footerGoalJa){ if(footerGoalEn) footerGoalEn.textContent=en.goal||''; if(footerGoalJa) footerGoalJa.textContent=ja.goal||en.goal||''; } else { $('#footer-goal').textContent=current.goal||''; }
-      const img=$('#brand-logo'); if(img&&S.BRAND_LOGO){img.src=S.BRAND_LOGO; img.style.display='inline-block'; img.alt=S.BRAND_NAME||'';} $('#brand-name').textContent=S.BRAND_NAME||''; $('#brand-link').href=S.BRAND_URL||'/'; $('#footer-brand').innerHTML='<strong>'+(S.BRAND_NAME||'')+'</strong>';
+      const img=$('#brand-logo'); if(img&&S.BRAND_LOGO){img.src=sanitizeAssetUrl(S.BRAND_LOGO); img.style.display='inline-block'; img.alt=brandName;}
+      $('#brand-name').textContent=brandName;
+      $('#brand-link').href=sanitizeLocalUrl(S.BRAND_URL);
+      const footerBrand=$('#footer-brand');
+      if(footerBrand){ clearNode(footerBrand); const strong=document.createElement('strong'); strong.textContent=brandName; footerBrand.appendChild(strong); }
     }
     function applyLanguageVisibility(){
       const lang=normalizeLang(getLocale());
@@ -1023,7 +1055,7 @@
     function isAnswered(q){const t=q.dataset.type; if(t==='mc') return !!q.querySelector('input[type=radio]:checked'); if(t==='ms') return q.querySelectorAll('input[type=checkbox]:checked').length>0; if(t==='text'){const v=q.querySelector('input[type=text]')?.value.trim(); return !!v;} return false;}
 
     function cleanLabelText(text){ return (text||'').replace(/\s+/g,' ').trim(); }
-    function describeChoiceList(q,values){ if(!values||!values.length) return ''; const map=v=>{const input=q.querySelector('input[value="'+CSS.escape(v)+'"]'); const label=input?.closest('label'); const raw=label?.innerText??label?.textContent; return label?cleanLabelText(raw):v; }; return values.map(map).join(', '); }
+    function describeChoiceList(q,values){ if(!values||!values.length) return ''; const map=v=>{const input=q.querySelector('input[value="'+cssEscape(v)+'"]'); const label=input?.closest('label'); const raw=label?.innerText??label?.textContent; return label?cleanLabelText(raw):v; }; return values.map(map).join(', '); }
     function describeChoiceLabel(q,value){ return describeChoiceList(q,[value]); }
 
     function evaluateQuestion(q){const id=q.dataset.id; const type=q.dataset.type; const ans=(q.dataset.answer||'').trim(); let ok=null,user=null; if(type==='mc'){const p=q.querySelector('input[type=radio]:checked'); if(!p){ok=null;} else {user=p.value; ok=(user===ans);} } else if(type==='ms'){const picked=q.querySelectorAll('input[type=checkbox]:checked'); user=Array.from(picked).map(i=>i.value).sort(); if(!user.length){ok=null;} else {const gold=ans.split(',').map(s=>s.trim()).sort(); ok=JSON.stringify(user)===JSON.stringify(gold);} } else if(type==='text'){const t=q.querySelector('input[type=text]'); user=(t?.value||'').trim(); const mode=(q.dataset.eval||'exact').toLowerCase(); if(!user){ok=null;} else if(mode==='regex'){try{ok=new RegExp(ans,'i').test(user);}catch(e){ok=false;}} else {ok=(user===ans);} } return {id,type,ok,user};}
@@ -1047,37 +1079,64 @@
         showExplain(q,true);
         const qTitle=q.querySelector('h4')?.innerText.trim()||result.id;
         const expText=q.querySelector('.explain')?.innerText.trim()||'';
-        const expHtml=escapeHtml(expText).replace(/\n/g,'<br>');
         const status=scoreLabel(result.ok,DT);
         const correctDisp=formatCorrectAnswerDisplay(q);
         const userDisp=formatUserAnswerDisplay(q,result)||DT.noAnswer;
-        rows.push('<tr>'+
-          '<td><div><strong>'+escapeHtml(result.id)+'</strong></div><div>'+escapeHtml(qTitle)+'</div></td>'+
-          '<td>'+escapeHtml(userDisp)+'</td>'+
-          '<td>'+escapeHtml(correctDisp||DT.notAvailable)+'</td>'+
-          '<td>'+escapeHtml(status)+'</td>'+
-          '<td>'+(expHtml||'')+'</td>'+
-        '</tr>');
+        rows.push({id:result.id,qTitle,expText,status,correctDisp,userDisp});
       });
       const box=resolveResultsBox(targetId);
       if(box){
         const scoreHeading=isJa?'スコア':'Score';
-        const summaryLabel=isJa
-          ? '正解: <strong>'+correct+'</strong> / '+total+' (回答: '+answered+')'
-          : 'Correct: <strong>'+correct+'</strong> / '+total+' (answered: '+answered+')';
-        const tableHTML='<div class="table-wrapper"><table><thead><tr>'+
-          '<th>'+DT.columns.question+'</th>'+
-          '<th>'+DT.columns.response+'</th>'+
-          '<th>'+DT.columns.correct+'</th>'+
-          '<th>'+DT.columns.score+'</th>'+
-          '<th>'+DT.columns.explanation+'</th>'+
-        '</tr></thead><tbody>'+rows.join('')+'</tbody></table></div>';
-        box.innerHTML='<h4 style="margin:0 0 8px">'+scoreHeading+'</h4><p>'+summaryLabel+'</p>'+tableHTML;
+        clearNode(box);
+        const heading=makeEl('h4');
+        heading.style.margin='0 0 8px';
+        heading.textContent=scoreHeading;
+        const summary=document.createElement('p');
+        const strong=document.createElement('strong');
+        strong.textContent=String(correct);
+        summary.appendChild(textNode(isJa?'正解: ':'Correct: '));
+        summary.appendChild(strong);
+        summary.appendChild(textNode(isJa?' / '+total+' (回答: '+answered+')':' / '+total+' (answered: '+answered+')'));
+        const wrapper=makeEl('div','table-wrapper');
+        const table=document.createElement('table');
+        const thead=document.createElement('thead');
+        const headerRow=document.createElement('tr');
+        [DT.columns.question,DT.columns.response,DT.columns.correct,DT.columns.score,DT.columns.explanation].forEach(label=>{
+          const th=document.createElement('th'); th.textContent=label; headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        const tbody=document.createElement('tbody');
+        rows.forEach(row=>{
+          const tr=document.createElement('tr');
+          const questionCell=document.createElement('td');
+          const idLine=document.createElement('div');
+          const idStrong=document.createElement('strong');
+          idStrong.textContent=row.id;
+          idLine.appendChild(idStrong);
+          const titleLine=document.createElement('div');
+          titleLine.textContent=row.qTitle;
+          questionCell.appendChild(idLine);
+          questionCell.appendChild(titleLine);
+          tr.appendChild(questionCell);
+          appendCell(tr,row.userDisp);
+          appendCell(tr,row.correctDisp||DT.notAvailable);
+          appendCell(tr,row.status);
+          const explanationCell=appendCell(tr);
+          appendMultilineText(explanationCell,row.expText);
+          tbody.appendChild(tr);
+        });
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        wrapper.appendChild(table);
+        box.appendChild(heading);
+        box.appendChild(summary);
+        box.appendChild(wrapper);
         box.style.display='block';
       }
     }
 
     // Handlers
+    document.addEventListener('submit',event=>event.preventDefault());
     $('#themeToggle')?.addEventListener('click',()=>{toggleTheme(); updateLiveScore();});
     $('#langToggle')?.addEventListener('click',()=>{const next=getLocale().startsWith('ja')?'en':'ja'; setLanguage(next,true);});
     $('#mode-badge').addEventListener('click',()=>{

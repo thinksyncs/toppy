@@ -24,6 +24,13 @@ To test the quiz locally:
 1. Open `quiz_template_skeleton.html` in your web browser
 2. The quiz works entirely client-side with no build step required
 
+## Security Posture
+
+- The quiz is static and does not submit answers to a server.
+- CSP blocks network connections, forms, frames, workers, media, and object/embed content.
+- Runtime settings are sanitized before being used as text, links, or image URLs.
+- Result rendering uses DOM APIs and text nodes instead of injecting user answers with `innerHTML`.
+
 ## Requirements
 
 The GitHub Pages deployment is configured in `.github/workflows/deploy-pages.yml` and requires:
